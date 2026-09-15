@@ -1,0 +1,15 @@
+[package]
+name = "chain-core"
+version = "0.0.0"
+edition = "2021"
+description = "Chain Core — coordination, IPC, permissions, and native-adapter routing beneath the Chain SDK."
+publish = false
+
+[lib]
+name = "chain_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }

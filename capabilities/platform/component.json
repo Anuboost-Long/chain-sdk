@@ -1,0 +1,16 @@
+{
+  "name": "platform",
+  "description": "Basic OS/arch/runtime information — the first Chain capability, used to prove the vertical slice.",
+  "status": "draft",
+  "contract": {
+    "semantic": "CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "not-started",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

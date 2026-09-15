@@ -1,0 +1,9 @@
+{
+  "name": "chain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Chain — reusable cross-platform desktop framework (SDK + Rust core). See AGENTS.md.",
+  "workspaces": [
+    "packages/*"
+  ]
+}

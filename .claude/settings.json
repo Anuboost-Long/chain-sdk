@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in \"$CLAUDE_PROJECT_DIR\"/packages/*|\"$CLAUDE_PROJECT_DIR\"/crates/*|\"$CLAUDE_PROJECT_DIR\"/capabilities/*|\"$CLAUDE_PROJECT_DIR\"/apps/*) case \"$f\" in */agent-docs/*) exit 0;; esac; echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Reminder (chain-sdk convention): if this change adds or materially changes a feature, add or update its agent-docs/<feature-name>/README.md (How it works / How to use it / Files to check) before finishing — see AGENTS.md > Feature docs.\"}}' ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

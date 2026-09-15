@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Chain</title>
+  <desc id="desc">Two interlocking sections form a single C, representing a stable interface and replaceable native implementation.</desc>
+  <path d="M204 48H108C74.863 48 48 74.863 48 108V116H64Q68 116 68 120V136Q68 140 72 140H80Q84 140 84 136V120Q84 116 88 116H104V108Q104 96 116 96H184L204 76V48Z" fill="currentColor"/>
+  <path d="M48 124H56Q60 124 60 128V144Q60 148 64 148H88Q92 148 92 144V128Q92 124 96 124H104V148Q104 160 116 160H184L204 180V208H108C74.863 208 48 181.137 48 148V124Z" fill="currentColor"/>
+</svg>

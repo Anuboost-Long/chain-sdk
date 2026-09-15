@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Matches asset/app-icon.svg: navy square, electric-lime + cream links. */
+@theme {
+  --color-chain-navy: #171b24;
+  --color-chain-lime: #c5f74f;
+  --color-chain-cream: #eef2e4;
+}

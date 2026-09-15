@@ -1,0 +1,12 @@
+{
+  "name": "@chain/sdk",
+  "version": "0.0.0",
+  "description": "Chain SDK — the public TypeScript API for the Chain desktop framework. Applications import this, never Tauri or native code directly.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  }
+}
