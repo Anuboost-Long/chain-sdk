@@ -1,0 +1,16 @@
+{
+  "name": "storage",
+  "description": "Persistent local storage (SQLite-backed): migrations, parametrized query/execute.",
+  "status": "draft",
+  "contract": {
+    "semantic": "CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}
