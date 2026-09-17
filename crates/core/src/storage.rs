@@ -1,4 +1,4 @@
-//! Storage capability — see /capabilities/storage/CONTRACT.md.
+//! Storage capability — see /agent-docs/capabilities/storage/CONTRACT.md.
 //! SQLite is a portable C library (vendored via rusqlite's "bundled"
 //! feature), so this implementation is identical on every desktop
 //! platform — there is no per-OS branching here. What differs per OS is

@@ -36,14 +36,18 @@ chain-sdk/
 │   ├── CAPABILITY_MATRIX.md     what's implemented, per platform
 │   ├── FRAMEWORK_CANDIDATES.md  what's generalizable vs. app-specific
 │   └── MNEME_DESKTOP_FRAMEWORK.md  original working notes / rationale
-├── capabilities/
+├── capabilities/                code + structured metadata only, no prose
 │   └── <name>/
-│       ├── AGENTS.md            capability-scoped agent memory
-│       ├── CONTRACT.md          semantic contract (what it means)
 │       ├── contract.ts          structural contract (exact API, types)
 │       ├── component.json       capability metadata/status
-│       ├── research/            per-platform native API research
 │       └── tests/                shared contract tests
+├── agent-docs/
+│   └── capabilities/            mirrors capabilities/<name>/ by name — all its prose
+│       └── <name>/
+│           ├── AGENTS.md        capability-scoped agent memory
+│           ├── CONTRACT.md      semantic contract (what it means)
+│           ├── README.md        how it works / how to use it / files to check
+│           └── research/        per-platform native API research
 ├── packages/
 │   ├── sdk/                     Chain SDK (TypeScript, published as @chain/sdk)
 │   └── cli/                     `chain` CLI — `chain init <path>` scaffolds a Chain-consuming app
@@ -78,4 +82,4 @@ chain-sdk/
 The only capability being built right now is `platform` —
 `desktop.platform.getInfo()` — to prove the full vertical slice works
 end to end. No other capability should be started until that slice is
-verified. See `capabilities/platform/AGENTS.md` for what's left to do.
+verified. See `agent-docs/capabilities/platform/AGENTS.md` for what's left to do.

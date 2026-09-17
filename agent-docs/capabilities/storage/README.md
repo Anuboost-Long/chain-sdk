@@ -43,17 +43,17 @@ wiring needed per app.
 
 ## Files to check
 
-- `capabilities/storage/CONTRACT.md` — the semantic contract (API
-  behavior, error model, explicit non-goals). Check this before changing
-  behavior or adding a method.
+- `agent-docs/capabilities/storage/CONTRACT.md` — the semantic contract
+  (API behavior, error model, explicit non-goals). Check this before
+  changing behavior or adding a method.
 - `capabilities/storage/contract.ts` — the exact types (`Migration`,
   `ExecuteResult`, `StorageApi`); change this and both implementations
   below together, never one without the others.
-- `capabilities/storage/AGENTS.md` — the actual TODO checklist (Windows
-  verification, contract tests, busy-timeout) and what's already been
-  verified and how.
-- `capabilities/storage/research/MACOS.md` /
-  `capabilities/storage/research/WINDOWS.md` — platform-specific
+- `agent-docs/capabilities/storage/AGENTS.md` — the actual TODO checklist
+  (Windows verification, contract tests, busy-timeout) and what's already
+  been verified and how.
+- `agent-docs/capabilities/storage/research/MACOS.md` /
+  `agent-docs/capabilities/storage/research/WINDOWS.md` — platform-specific
   findings; Windows is explicitly **not yet verified** (no Windows
   machine was available) — read the checklist there before assuming it
   works.
@@ -66,7 +66,7 @@ wiring needed per app.
 - `packages/cli/templates/lib.rs` — the Tauri command layer
   (`storage_migrate`/`storage_query`/`storage_execute`, lazy-open via
   `StorageState`) that every scaffolded app gets. This is the file
-  `chain update` propagates — see `agent-docs/command/README.md`.
+  `chain update` propagates — see `agent-docs/framework/command/README.md`.
 - `apps/playground/src-tauri/src/lib.rs` — same wiring, kept in sync by
   hand (playground isn't `chain init`-managed) so the framework's own
   proof app demonstrates every capability, not just `platform`.

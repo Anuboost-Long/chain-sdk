@@ -3,7 +3,7 @@
   "description": "Basic OS/arch/runtime information — the first Chain capability, used to prove the vertical slice.",
   "status": "draft",
   "contract": {
-    "semantic": "CONTRACT.md",
+    "semantic": "../../agent-docs/capabilities/platform/CONTRACT.md",
     "structural": "contract.ts"
   },
   "platforms": {

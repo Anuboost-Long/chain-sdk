@@ -16,7 +16,7 @@ Generalizable:
 Yes — every app needs basic OS/arch/runtime info.
 
 Contract:
-Draft (`capabilities/platform/CONTRACT.md`, `contract.ts`)
+Draft (`agent-docs/capabilities/platform/CONTRACT.md`, `capabilities/platform/contract.ts`)
 
 macOS:
 Implemented, verified (`apps/playground` and `mneme`)
@@ -39,14 +39,14 @@ Yes — SQLite-backed local storage is a near-universal desktop-app need,
 not mneme-specific (the actual schema on top of it is mneme-specific).
 
 Contract:
-Draft (`capabilities/storage/CONTRACT.md`, `contract.ts`)
+Draft (`agent-docs/capabilities/storage/CONTRACT.md`, `capabilities/storage/contract.ts`)
 
 macOS:
 Implemented, verified end to end in `mneme`'s running window (including
 persistence across restarts)
 
 Windows:
-Not started — see `capabilities/storage/research/WINDOWS.md` for
+Not started — see `agent-docs/capabilities/storage/research/WINDOWS.md` for
 specific risks to check before implementing/verifying (rusqlite's
 `bundled` feature is itself cross-platform, so the Rust code needs no
 changes; only verification is pending)

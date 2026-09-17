@@ -1,4 +1,4 @@
-//! Platform capability — see /capabilities/platform/CONTRACT.md.
+//! Platform capability — see /agent-docs/capabilities/platform/CONTRACT.md.
 //! Mirrors the PlatformInfo shape defined in
 //! /capabilities/platform/contract.ts. Keep both in sync by hand until a
 //! codegen step exists.

@@ -31,14 +31,15 @@ const info = await desktop.platform.getInfo();
 
 ## Files to check
 
-- `capabilities/platform/CONTRACT.md` — what this capability is supposed
-  to mean/do; check this before changing behavior.
+- `agent-docs/capabilities/platform/CONTRACT.md` — what this capability
+  is supposed to mean/do; check this before changing behavior.
 - `capabilities/platform/contract.ts` — the exact types (`PlatformInfo`,
   `PlatformApi`); change this and `packages/sdk/src/platform.ts` together,
   never one without the other.
-- `capabilities/platform/AGENTS.md` — the actual TODO checklist for
-  finishing this capability (Rust impl, Tauri wiring, playground app,
-  contract tests). Read this first if you're picking up work here.
+- `agent-docs/capabilities/platform/AGENTS.md` — the actual TODO
+  checklist for finishing this capability (Rust impl, Tauri wiring,
+  playground app, contract tests). Read this first if you're picking up
+  work here.
 - `packages/sdk/src/platform.ts` — SDK-side stub; replace the `throw`
   once there's a real bridge to call into Rust.
 - `crates/core/src/platform.rs` — Rust-side stub; replace

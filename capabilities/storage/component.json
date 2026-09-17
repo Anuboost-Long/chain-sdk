@@ -3,7 +3,7 @@
   "description": "Persistent local storage (SQLite-backed): migrations, parametrized query/execute.",
   "status": "draft",
   "contract": {
-    "semantic": "CONTRACT.md",
+    "semantic": "../../agent-docs/capabilities/storage/CONTRACT.md",
     "structural": "contract.ts"
   },
   "platforms": {
