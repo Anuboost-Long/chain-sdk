@@ -4,6 +4,9 @@
   "description": "chain init — scaffolds a new Chain-consuming app, the way `npm create tauri-app` or `expo init` do.",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "bin": {
     "chain": "./dist/bin.js"
   },

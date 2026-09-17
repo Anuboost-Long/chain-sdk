@@ -137,7 +137,11 @@ function regenerateIndex(migrationsDir: string): void {
     .sort();
   const entries = files.map((file) => {
     const slug = file.replace(/^\d{4}-/, "").replace(/\.ts$/, "");
-    return { module: `./${file.replace(/\.ts$/, "")}`, identifier: camelCase(slug) };
+    // Explicit .ts extension (allowImportingTsExtensions, already on in the
+    // scaffold's tsconfig) — `chain database` loads this file directly via
+    // Node's native TS support, whose ESM resolver needs the real
+    // extension; an extensionless specifier only works under a bundler.
+    return { module: `./${file}`, identifier: camelCase(slug) };
   });
   const imports = entries.map((e) => `import { ${e.identifier} } from "${e.module}";`).join("\n");
   const list = entries.map((e) => `  ${e.identifier},`).join("\n");

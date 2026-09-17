@@ -9,6 +9,7 @@ import { dev } from "./dev.js";
 import { build } from "./build.js";
 import { inspect } from "./inspect.js";
 import { migration } from "./migration.js";
+import { database } from "./database.js";
 
 const cliDir = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(cliDir, "../package.json"), "utf8")) as {
@@ -44,6 +45,13 @@ Usage:
                                rewire its index. First use in an app sets
                                up db/migrations + db/schema. Run from
                                inside the app.
+  chain database update       Apply every pending migration straight to
+                               the app's real SQLite file (the same one
+                               desktop.storage.migrate() would use) —
+                               without launching the app. Run from
+                               inside the app.
+  chain database list         List every migration with its applied/
+                               pending status against that same file.
   chain doctor                Check (and optionally install) the Rust
                                toolchain a Chain app needs to build.
   chain --help, -h            Show this help.
@@ -86,6 +94,10 @@ switch (command) {
 
   case "migration":
     migration(args);
+    break;
+
+  case "database":
+    await database(args);
     break;
 
   case "--help":

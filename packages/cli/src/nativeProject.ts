@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /** Where the Tauri native project lives, hidden from day-to-day view (see
@@ -50,4 +51,32 @@ export function tauriEnv(cwd: string): NodeJS.ProcessEnv {
     FORCE_COLOR: "1",
     TAURI_APP_PATH: nativeProjectDir(cwd)
   };
+}
+
+/**
+ * Where the app's SQLite file lives — the exact path Tauri's own
+ * `app.path().app_data_dir()` resolves to (verified against tauri 2.11.5's
+ * and dirs 6.0.0's source: `dirs::data_dir().join(identifier)`), joined
+ * with `app.db` the way `templates/lib.rs`'s `get_db()` opens it. `chain
+ * database` needs this to operate on the same file the running app uses,
+ * without going through Tauri (which only exists inside a running app).
+ */
+export function resolveDbPath(cwd: string): string {
+  const confPath = path.join(nativeProjectDir(cwd), "tauri.conf.json");
+  const { identifier } = JSON.parse(fs.readFileSync(confPath, "utf8")) as { identifier: string };
+
+  let baseDir: string;
+  if (process.platform === "darwin") {
+    baseDir = path.join(os.homedir(), "Library", "Application Support", identifier);
+  } else if (process.platform === "win32") {
+    if (!process.env.APPDATA) {
+      console.error("Error: %APPDATA% isn't set — can't resolve the app's data directory.");
+      process.exit(1);
+    }
+    baseDir = path.join(process.env.APPDATA, identifier);
+  } else {
+    const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+    baseDir = path.join(dataHome, identifier);
+  }
+  return path.join(baseDir, "app.db");
 }

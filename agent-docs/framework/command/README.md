@@ -10,8 +10,8 @@ package's `prepare` script so `npm install`/`npm link` build it
 automatically) — the published/linked entry point is the compiled
 `dist/bin.js`, never a `.ts` file directly. `src/bin.ts` reads its own
 `package.json` for the version, parses `process.argv`, and switches on
-the first argument to `init`, `dev`, `build`, `update`, `migration`, or
-`doctor`.
+the first argument to `init`, `dev`, `build`, `update`, `migration`,
+`database`, or `doctor`.
 
 ### `chain init <project-name>` — scaffold a new app
 
@@ -440,6 +440,56 @@ Every run (first or not) then:
    identifier the same way — this file is entirely chain-generated
    output, never hand-edited, so overwriting it wholesale each run is
    safe and avoids any brittle surgical-insert-into-existing-file logic.
+   Each import uses an explicit `./NNNN-<slug>.ts` extension (not
+   extensionless) — Vite/tsc's `allowImportingTsExtensions` (already on
+   in the scaffold's tsconfig) accepts either, but `chain database`
+   (below) loads this file directly via Node's native TypeScript support,
+   whose ESM resolver has no extension-probing and needs the real one.
+
+### `chain database update` / `chain database list` — operate on the real database
+
+`chain migration` (above) only scaffolds a migration file — something has
+to actually run it against a database. Normally that's the app itself,
+via `desktop.storage.migrate()` on startup. `chain database update` is
+the CLI-side equivalent: apply every pending migration straight to the
+app's real SQLite file, without launching the app at all (useful in CI,
+or right after writing a migration when you don't want to boot the whole
+UI just to test it). `chain database list` is the read-only companion —
+shows every migration with its applied/pending status, mirroring
+`dotnet ef migrations list`.
+
+**Both operate on literally the same file the running app would open —
+not a copy, not a dev-only stand-in.** `resolveDbPath()`
+(`nativeProject.ts`) replicates Tauri's own `app.path().app_data_dir()`
+exactly (`dirs::data_dir().join(identifier)`, verified against tauri
+2.11.5's and dirs 6.0.0's vendored source — macOS:
+`~/Library/Application Support/<identifier>`; Windows: `%APPDATA%/
+<identifier>`; Linux: `$XDG_DATA_HOME` or `~/.local/share`/`<identifier>`)
+joined with `app.db`, matching `templates/lib.rs`'s `get_db()`. The
+`<identifier>` comes from `.chain/native/tauri.conf.json`, so this only
+works once an app has scaffolded/updated to that layout.
+
+`database.ts` loads `db/migrations/index.ts` with a plain `import()` —
+these files are simple object literals behind type-only imports, well
+within what Node's native TS type-stripping (stable, unflagged, since
+Node 22.18 — see the `engines` field in `packages/cli/package.json`)
+handles, so no bundler or transpile step is needed just to read them.
+
+`update`'s SQL execution deliberately mirrors `crates/core/src/storage.rs`'s
+`Database::migrate` line for line — same `_chain_migrations` tracking
+table (`CREATE TABLE IF NOT EXISTS ... version INTEGER PRIMARY KEY,
+applied_at TEXT NOT NULL DEFAULT (datetime('now'))`), same "run the
+migration's SQL as one batch, then insert its version row, no wrapping
+transaction beyond that" behavior — so the CLI applying a migration and
+the app applying it later (or vice versa) are indistinguishable to
+`_chain_migrations`, whichever one runs second just sees its work already
+done. Uses `node:sqlite`'s `DatabaseSync` (experimental as of Node 22.5,
+prints one `ExperimentalWarning` per invocation — not worth suppressing
+for a CLI tool; attaching a `process.on("warning", ...)` listener does
+*not* stop Node's own default stderr print for this particular warning,
+confirmed empirically, so don't try). `list` opens with `{ readOnly:
+true }` and skips opening entirely if `app.db` doesn't exist yet, so it
+never creates a file as a side effect of merely listing.
 
 ### `chain doctor` — Rust toolchain check
 
@@ -481,9 +531,9 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
 ## Files to check
 
 - `packages/cli/src/bin.ts` — argument parsing / command routing
-  (`init`, `dev`, `build`, `inspect`, `update`, `migration`, `doctor`,
-  `--help`, `--version`, unknown-command and no-args handling). Start
-  here for anything about how a flag or subcommand is recognized.
+  (`init`, `dev`, `build`, `inspect`, `update`, `migration`, `database`,
+  `doctor`, `--help`, `--version`, unknown-command and no-args handling).
+  Start here for anything about how a flag or subcommand is recognized.
 - `packages/cli/src/migration.ts` — `chain migration`: `findMigrationsDir()`
   (the `src/`-walk that locates `db/migrations` wherever an app keeps
   it), `scaffoldDb()` (first-run `db/index.ts` + `db/schema/index.ts`
@@ -495,12 +545,22 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `nativeProject.ts`'s `checkChainApp()` like every other command that
   must run from inside an app.
 - `packages/cli/src/nativeProject.ts` — shared by `dev.ts`/`build.ts`/
-  `inspect.ts`: `resolveTauriBin()`, `nativeProjectDir()` (`.chain/native`),
-  `checkChainApp()` (the "doesn't look like a Chain app" / "still on
-  src-tauri, run `chain update`" errors), `tauriEnv()` (sets
-  `TAURI_APP_PATH` — this is *the* mechanism that makes `.chain/native`
-  discoverable to Tauri's CLI, see the section above), `inspectorInfoPath()`
-  (where `chain inspect` finds the running bridge's port+token).
+  `inspect.ts`/`database.ts`: `resolveTauriBin()`, `nativeProjectDir()`
+  (`.chain/native`), `checkChainApp()` (the "doesn't look like a Chain
+  app" / "still on src-tauri, run `chain update`" errors), `tauriEnv()`
+  (sets `TAURI_APP_PATH` — this is *the* mechanism that makes
+  `.chain/native` discoverable to Tauri's CLI, see the section above),
+  `inspectorInfoPath()` (where `chain inspect` finds the running bridge's
+  port+token), `resolveDbPath()` (where `chain database` finds `app.db` —
+  see its section above for the exact per-OS algorithm and why it has to
+  match Tauri's own).
+- `packages/cli/src/database.ts` — `chain database update`/`chain
+  database list`: `loadMigrations()` (the `import()` of `db/migrations/
+  index.ts`), `update()` (mirrors `crates/core/src/storage.rs`'s
+  `Database::migrate` — see the section above), `list()` (read-only,
+  never creates `app.db`). Reuses `findMigrationsDir()` from
+  `migration.ts` and `checkChainApp()`/`resolveDbPath()` from
+  `nativeProject.ts`.
 - `packages/cli/src/nativeOutput.ts` — shared by `dev.ts`/`build.ts`: the
   condensed-output state/types, `processLine()`, `maybePrintStatus()`,
   `makeColor()`. Change cargo/Vite/Tauri-CLI output parsing here, not in
