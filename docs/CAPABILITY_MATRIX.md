@@ -8,6 +8,7 @@ to see what actually exists vs. what's just planned.
 | --------------- | ----- | ------- | ----- | -------- |
 | Platform/System | 🧪    | ⏳      | ⏳    | Draft    |
 | Storage         | 🧪    | ⏳      | ⏳    | Draft    |
+| Files           | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -30,6 +31,15 @@ React → SDK → Tauri → Rust → SQLite path in `mneme`'s running window,
 including persistence across app restarts — but not yet verified on
 Windows (`agent-docs/capabilities/storage/research/WINDOWS.md` has
 specific risks to check first: WAL over network drives, antivirus file
+locking).
+
+`files` (managed local blob storage: `write`/`read`/`url`/`delete` by an
+opaque reference) is implemented on macOS — Rust unit tests pass, and
+the Tauri/SDK layers compile and typecheck — but has not yet been
+exercised through a real running app's webview (see
+`agent-docs/capabilities/files/AGENTS.md`'s Status section), and Windows
+is not started (`agent-docs/capabilities/files/research/WINDOWS.md` has
+the specific risks to check first: MAX_PATH limits, antivirus file
 locking).
 
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.

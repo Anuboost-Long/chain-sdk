@@ -54,3 +54,33 @@ changes; only verification is pending)
 Possible package:
 `@chain/sdk` (bundled in core, not a separate package — same reasoning
 as Platform/System)
+
+## Files
+
+Used by:
+
+- Mneme (real consumer — requested it; see
+  `docs/chain-sdk-requests/02-files.md` in the mneme repo)
+
+Generalizable:
+Yes — managed local blob storage (images, attachments, exports) is a
+near-universal desktop-app need, not mneme-specific (deciding which
+attachments to keep and how to render them is mneme's own logic, built
+on top of this).
+
+Contract:
+Draft (`agent-docs/capabilities/files/CONTRACT.md`, `capabilities/files/contract.ts`)
+
+macOS:
+Implemented, unit-tested (`cargo test -p chain-core`) — not yet run
+through a real app's webview end to end
+
+Windows:
+Not started — see `agent-docs/capabilities/files/research/WINDOWS.md` for
+specific risks to check before implementing/verifying (`std::fs` is
+itself cross-platform, so the Rust code needs no changes; MAX_PATH and
+antivirus-locking risks are the same category `storage` already flagged)
+
+Possible package:
+`@chain/sdk` (bundled in core, not a separate package — same reasoning
+as Platform/System)

@@ -41,3 +41,4 @@ feature added to this SDK.
 | Chain Core           | [`framework/core/`](framework/core/README.md)               | `crates/core` — the Rust coordination crate               |
 | Platform capability  | [`capabilities/platform/`](capabilities/platform/README.md) | `desktop.platform.getInfo()` end-to-end slice              |
 | Storage capability   | [`capabilities/storage/`](capabilities/storage/README.md)   | `desktop.storage` — SQLite-backed migrate/query/execute    |
+| Files capability     | [`capabilities/files/`](capabilities/files/README.md)       | `desktop.files` — managed local blob storage (write/read/url/delete) |

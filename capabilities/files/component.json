@@ -1,0 +1,16 @@
+{
+  "name": "files",
+  "description": "Managed local blob storage: write/read/delete bytes by an opaque reference, plus a display URL.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/files/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

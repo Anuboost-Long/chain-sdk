@@ -66,6 +66,77 @@ fn storage_execute(
     with_storage(&app, &state, |db| db.execute(&sql, &params))
 }
 
+// Bridges the files capability contract (capabilities/files in
+// chain-sdk). The managed directory is opened lazily, on first use, as a
+// `files/` sibling of storage's `app.db` in this app's per-user data
+// directory — see CONTRACT.md.
+struct FilesState(Mutex<Option<chain_core::files::Files>>);
+
+fn with_files<T>(
+    app: &tauri::AppHandle,
+    state: &tauri::State<FilesState>,
+    f: impl FnOnce(&chain_core::files::Files) -> Result<T, chain_core::files::FilesError>,
+) -> Result<T, String> {
+    let mut guard = state.0.lock().expect("files mutex poisoned");
+    if guard.is_none() {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let files = chain_core::files::Files::open(&dir.join("files")).map_err(to_files_command_error)?;
+        *guard = Some(files);
+    }
+    f(guard.as_ref().expect("just initialized above")).map_err(to_files_command_error)
+}
+
+// The SDK checks for this exact "NOT_FOUND: " prefix to map onto
+// ChainErrorCode::NOT_FOUND — see packages/sdk/src/files.ts.
+fn to_files_command_error(e: chain_core::files::FilesError) -> String {
+    match e {
+        chain_core::files::FilesError::NotFound(m) => format!("NOT_FOUND: {m}"),
+        chain_core::files::FilesError::Other(m) => m,
+    }
+}
+
+#[tauri::command]
+fn files_write(
+    app: tauri::AppHandle,
+    state: tauri::State<FilesState>,
+    bytes: Vec<u8>,
+    extension: Option<String>,
+) -> Result<String, String> {
+    with_files(&app, &state, |files| files.write(&bytes, extension.as_deref()))
+}
+
+#[tauri::command]
+fn files_read(
+    app: tauri::AppHandle,
+    state: tauri::State<FilesState>,
+    reference: String,
+) -> Result<Vec<u8>, String> {
+    with_files(&app, &state, |files| files.read(&reference))
+}
+
+// Internal — not part of the public SDK contract. Resolves `reference`
+// to an absolute path so the SDK's `url()` can feed it to Tauri's own
+// `convertFileSrc`; the app itself never sees a real filesystem path.
+#[tauri::command]
+fn files_resolve_path(
+    app: tauri::AppHandle,
+    state: tauri::State<FilesState>,
+    reference: String,
+) -> Result<String, String> {
+    with_files(&app, &state, |files| {
+        files.resolve(&reference).map(|p| p.to_string_lossy().to_string())
+    })
+}
+
+#[tauri::command]
+fn files_delete(
+    app: tauri::AppHandle,
+    state: tauri::State<FilesState>,
+    reference: String,
+) -> Result<(), String> {
+    with_files(&app, &state, |files| files.delete(&reference))
+}
+
 // Callback target for the dev inspector's injected JS — see dev_inspector.rs.
 // Always registered (so `generate_handler!` below stays unconditional), but
 // only ever invoked when the `chain-dev-inspector` feature actually started
@@ -86,6 +157,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
+        .manage(FilesState(Mutex::new(None)))
         .setup(|_app| {
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
@@ -98,6 +170,10 @@ pub fn run() {
             storage_migrate,
             storage_query,
             storage_execute,
+            files_write,
+            files_read,
+            files_resolve_path,
+            files_delete,
             __chain_inspector_report
         ])
         .run(tauri::generate_context!())
