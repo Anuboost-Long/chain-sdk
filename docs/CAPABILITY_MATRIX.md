@@ -34,12 +34,12 @@ specific risks to check first: WAL over network drives, antivirus file
 locking).
 
 `files` (managed local blob storage: `write`/`read`/`url`/`delete` by an
-opaque reference) is implemented on macOS — Rust unit tests pass, and
-the Tauri/SDK layers compile and typecheck — but has not yet been
-exercised through a real running app's webview (see
-`agent-docs/capabilities/files/AGENTS.md`'s Status section), and Windows
-is not started (`agent-docs/capabilities/files/research/WINDOWS.md` has
-the specific risks to check first: MAX_PATH limits, antivirus file
-locking).
+opaque reference) is implemented and verified end to end on macOS — a
+real write/read/url/delete round trip through the full React → SDK →
+Tauri → Rust → `std::fs` path in `apps/playground`'s running window,
+confirmed byte-exact — and propagated to `mneme` via `chain update`, but
+not yet verified on Windows
+(`agent-docs/capabilities/files/research/WINDOWS.md` has the specific
+risks to check first: MAX_PATH limits, antivirus file locking).
 
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.

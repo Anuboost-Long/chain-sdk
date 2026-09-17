@@ -61,25 +61,36 @@ Read order for a task in this capability:
 
 ## Status
 
-Implemented and unit-tested on macOS:
+Implemented and verified for real on macOS:
 
 - `crates/core/src/files.rs` has passing unit tests
-  (`write_read_delete_round_trip`, `rejects_path_traversal_references`).
+  (`write_read_delete_round_trip`, `rejects_path_traversal_references`,
+  `write_without_extension_has_no_dot`).
 - Wired as real Tauri commands (`files_write`/`files_read`/
   `files_resolve_path`/`files_delete`) in `packages/cli/templates/lib.rs`
   (propagates to every `chain init`/`chain update`'d app) and in
   `apps/playground`.
-- Not yet exercised through a real running app's webview end to end (no
-  live probe run yet at the time this file was last touched) — see the
-  README's "How to use it" for the exact call shape once that
-  verification happens, and update this section when it does.
+- Propagated to `mneme` via `chain update` itself — `.chain/native/src/lib.rs`
+  picked up the four new commands with no conflicts; a second `chain
+  update` afterward correctly reported "Already up to date."
+- Verified end to end in `apps/playground`'s actual running window (raw
+  `tauri dev --features chain-dev-inspector`, not `chain dev` — playground
+  intentionally keeps the old `src-tauri` layout, so `chain dev`'s
+  `checkChainApp` gate doesn't apply to it; a temporary probe rendered its
+  JSON result into the DOM and it was read back via a hand-rolled client
+  speaking the dev-inspector's TCP protocol directly, since `chain
+  inspect` itself also gates on `checkChainApp`). Confirmed for real: a
+  `write()` reference round-tripped through `read()` with byte-exact
+  content, `url()` produced a well-formed `asset://localhost/...` URL
+  encoding the real resolved path, `delete()` succeeded, and the
+  subsequent `read()` rejected with `NOT_FOUND` as designed. The probe
+  (in `apps/playground/src/App.tsx`) and the temporary dev-port bump (to
+  avoid colliding with another already-running dev server on the default
+  port) were both reverted afterward — `git diff --stat apps/playground/`
+  is clean.
 
 ## What's NOT done yet (next steps for an agent to pick up)
 
-- [ ] Run a real end-to-end probe in mneme (or `apps/playground`): write
-      bytes from the actual webview, read them back, and render via
-      `url()` — mirror how `storage` was verified (see its AGENTS.md).
-      Revert the probe afterward.
 - [ ] Verify on Windows — do NOT mark the contract/component status
       stable until confirmed there (rule: no single-platform contracts).
       See `research/WINDOWS.md` for the specific risks (MAX_PATH,
@@ -87,11 +98,12 @@ Implemented and unit-tested on macOS:
 - [ ] Add contract tests under `capabilities/files/tests/` — currently
       the only test is `crates/core/src/files.rs`'s Rust unit tests,
       same gap `storage` currently has too.
-- [ ] Propagate to mneme via `chain update` and confirm mneme can
-      actually start writing real `attachment.file_path` values instead
-      of base64-inlining images (that migration of mneme's own
-      `page-image.ts`/`course-image.ts` is mneme's job, not this
-      capability's, but it's the actual point of building this).
+- [ ] mneme actually switching `page-image.ts`/`course-image.ts` from
+      base64-inlining to real `desktop.files.write` calls, and populating
+      `attachment.file_path` with the result — this capability already
+      reached mneme via `chain update`; the app-level migration to use it
+      is mneme's job, not this capability's, but it's the actual point of
+      having built this.
 
 ## Rules specific to this capability
 

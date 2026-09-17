@@ -72,8 +72,9 @@ Contract:
 Draft (`agent-docs/capabilities/files/CONTRACT.md`, `capabilities/files/contract.ts`)
 
 macOS:
-Implemented, unit-tested (`cargo test -p chain-core`) — not yet run
-through a real app's webview end to end
+Implemented, verified end to end in `apps/playground`'s running window
+(byte-exact write/read round trip, asset-protocol URL, idempotent
+delete) and propagated to `mneme` via `chain update`
 
 Windows:
 Not started — see `agent-docs/capabilities/files/research/WINDOWS.md` for
