@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 use tauri::Manager;
 
+mod dev_inspector;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -64,17 +66,39 @@ fn storage_execute(
     with_storage(&app, &state, |db| db.execute(&sql, &params))
 }
 
+// Callback target for the dev inspector's injected JS — see dev_inspector.rs.
+// Always registered (so `generate_handler!` below stays unconditional), but
+// only ever invoked when the `chain-dev-inspector` feature actually started
+// the bridge — see that module's doc comment for why this command's own
+// signature stays feature-independent.
+#[tauri::command]
+fn __chain_inspector_report(
+    state: tauri::State<dev_inspector::InspectorState>,
+    ok: bool,
+    result: Option<String>,
+    error: Option<String>,
+) {
+    dev_inspector::report(&state, ok, result, error);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
+        .setup(|_app| {
+            _app.manage(dev_inspector::InspectorState::default());
+            #[cfg(feature = "chain-dev-inspector")]
+            dev_inspector::start(_app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             get_platform_info,
             storage_migrate,
             storage_query,
-            storage_execute
+            storage_execute,
+            __chain_inspector_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

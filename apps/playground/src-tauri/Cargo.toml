@@ -24,6 +24,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chain-core = { path = "../../../crates/core" }
 
+[features]
+# Only `chain dev` passes --features chain-dev-inspector; `chain build`
+# never does, so a release binary contains none of dev_inspector.rs.
+chain-dev-inspector = []
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

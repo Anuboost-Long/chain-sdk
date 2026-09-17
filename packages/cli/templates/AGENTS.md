@@ -4,21 +4,30 @@
 repo. It must never import Tauri, Rust, or any native/OS API directly —
 only `@chain/sdk`. See that repo's `AGENTS.md` and `docs/ARCHITECTURE.md`
 for the rules this app has to follow, and
-`capabilities/<name>/CONTRACT.md` for what each capability actually does.
+`agent-docs/capabilities/<name>/CONTRACT.md` for what each capability
+actually does.
 
 ## Current state
 
 This is the scaffold produced by `chain init`:
 
 - Tauri + React + TypeScript (via `create-tauri-app`) — a real native
-  runtime, not just a browser page. `npm run dev`/`npm run build` are the
-  real thing (`tauri dev`/`tauri build`) — this was deliberately changed
-  from `create-tauri-app`'s default, where those names only ran Vite.
-  Use `npm run dev:web`/`npm run build:web` for frontend-only iteration.
-  If you ever rename these scripts, update
-  `src-tauri/tauri.conf.json`'s `beforeDevCommand`/`beforeBuildCommand`
+  runtime, not just a browser page. `npm run dev`/`npm run build` run
+  `chain dev`/`chain build`, which wrap the real `tauri dev`/`tauri build`
+  behind condensed output — this was deliberately changed from
+  `create-tauri-app`'s default, where those names only ran Vite. Use
+  `npm run dev:web`/`npm run build:web` for frontend-only iteration. If
+  you ever rename `dev:web`/`build:web`, update
+  `.chain/native/tauri.conf.json`'s `beforeDevCommand`/`beforeBuildCommand`
   to match, or `npm run dev`/`npm run build` will recurse into
   themselves infinitely.
+- The Tauri native project (Rust/Cargo side) lives at `.chain/native/`,
+  not the usual `src-tauri/` — dot-prefixed and hidden on purpose, since
+  it's generated/framework-owned the same way `node_modules` is, and you
+  should almost never need to open it (the real native logic lives in
+  `chain-sdk`'s `crates/core`). `chain dev`/`chain build` point Tauri at
+  it via the `TAURI_APP_PATH` env var, so running `tauri dev`/`tauri
+  build` directly (instead of through `chain`) won't find it.
 - Tailwind CSS v4, wired through `@tailwindcss/vite` in `vite.config.ts`.
   `src/App.css` defines the `chain-navy`/`chain-lime`/`chain-cream` theme
   tokens (matched to `asset/app-icon.svg`) via a Tailwind `@theme` block —
@@ -43,8 +52,8 @@ This is the scaffold produced by `chain init`:
   app can reach the Chain SDK end to end.
 - Chain's placeholder branding: `asset/app-icon.svg` (used in the nav
   bar) and `asset/icons/` (the full desktop icon set), also copied into
-  `src-tauri/icons/` where Tauri's bundler actually reads them from
-  (`src-tauri/tauri.conf.json`'s `bundle.icon` already points there —
+  `.chain/native/icons/` where Tauri's bundler actually reads them from
+  (`.chain/native/tauri.conf.json`'s `bundle.icon` already points there —
   no config change needed to use them).
 
 ## Staying in sync with chain-sdk
@@ -62,7 +71,7 @@ depends on — **commit it to git, don't delete or gitignore it**.
 1. Replace `asset/app-icon.svg` with your own square SVG.
 2. Regenerate the desktop set: `npx tauri icon asset/app-icon.svg --output asset/icons`
    (run from this app's root, after installing the Tauri CLI).
-3. Copy the regenerated files from `asset/icons/` into `src-tauri/icons/`
+3. Copy the regenerated files from `asset/icons/` into `.chain/native/icons/`
    — that's the copy Tauri's bundler actually uses.
 
 ## Next steps

@@ -153,14 +153,33 @@ export async function update(): Promise<void> {
   const baselineDir = path.join(target, ".chain/baseline");
   const ctx = scaffoldContext(target);
 
+  const oldNativeDir = path.join(target, "src-tauri");
+  const newNativeDir = path.join(target, ".chain/native");
+
   if (
     !fs.existsSync(path.join(target, "package.json")) ||
-    !fs.existsSync(path.join(target, "src-tauri"))
+    (!fs.existsSync(oldNativeDir) && !fs.existsSync(newNativeDir))
   ) {
     console.error(
       "Error: this doesn't look like a chain init-scaffolded app (no package.json/src-tauri here)."
     );
     process.exit(1);
+  }
+
+  // One-time migration: older apps have the native project at src-tauri/;
+  // chain now hides it at .chain/native/ (see agent-docs/framework/command/README.md).
+  // A plain rename (same filesystem) preserves the Cargo target/ build
+  // cache, so this doesn't trigger a full rebuild.
+  if (fs.existsSync(oldNativeDir) && !fs.existsSync(newNativeDir)) {
+    fs.mkdirSync(path.dirname(newNativeDir), { recursive: true });
+    fs.renameSync(oldNativeDir, newNativeDir);
+    const oldBaselineNative = path.join(baselineDir, "src-tauri");
+    const newBaselineNative = path.join(baselineDir, ".chain/native");
+    if (fs.existsSync(oldBaselineNative)) {
+      fs.mkdirSync(path.dirname(newBaselineNative), { recursive: true });
+      fs.renameSync(oldBaselineNative, newBaselineNative);
+    }
+    console.log("  move     src-tauri -> .chain/native\n");
   }
 
   if (!fs.existsSync(baselineDir)) {

@@ -13,16 +13,18 @@ export interface ScaffoldContext {
   name: string;
   sdkRelative: string;
   coreRelative: string;
+  cliRelative: string;
 }
 
 export function scaffoldContext(target: string): ScaffoldContext {
   const name = path.basename(target);
   const sdkRelative = path.relative(target, path.join(chainRoot, "packages/sdk"));
   const coreRelative = path.relative(
-    path.join(target, "src-tauri"),
+    path.join(target, ".chain/native"),
     path.join(chainRoot, "crates/core")
   );
-  return { target, name, sdkRelative, coreRelative };
+  const cliRelative = path.relative(target, path.join(chainRoot, "packages/cli"));
+  return { target, name, sdkRelative, coreRelative, cliRelative };
 }
 
 /**
@@ -40,8 +42,12 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
   // exactly once — on a re-patch, scripts.dev/build are already ours.
   if (!("dev:web" in scripts)) scripts["dev:web"] = pkg.scripts.dev;
   if (!("build:web" in scripts)) scripts["build:web"] = pkg.scripts.build;
-  scripts.dev = "tauri dev";
-  scripts.build = "tauri build";
+  // `dev`/`build` go through `chain dev`/`chain build`, which wrap
+  // `tauri dev`/`tauri build` behind condensed output and point Tauri at
+  // the hidden `.chain/native` project via TAURI_APP_PATH (see
+  // packages/cli/src/dev.ts, build.ts, nativeProject.ts).
+  scripts.dev = "chain dev";
+  scripts.build = "chain build";
   pkg.scripts = scripts;
   pkg.dependencies = {
     ...pkg.dependencies,
@@ -52,7 +58,8 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
   pkg.devDependencies = {
     ...pkg.devDependencies,
     tailwindcss: "^4",
-    "@tailwindcss/vite": "^4"
+    "@tailwindcss/vite": "^4",
+    "@chain/cli": `file:${ctx.cliRelative}`
   };
   return JSON.stringify(pkg, null, 2) + "\n";
 }
@@ -71,15 +78,26 @@ export function patchTauriConf(raw: string): string {
   const conf = JSON.parse(raw);
   conf.build.beforeDevCommand = "npm run dev:web";
   conf.build.beforeBuildCommand = "npm run build:web";
+  // .chain/native/ is one level deeper than src-tauri/ used to be.
+  conf.build.frontendDist = "../../dist";
   return JSON.stringify(conf, null, 2) + "\n";
 }
 
+const DEV_INSPECTOR_FEATURE =
+  '[features]\n' +
+  '# Only `chain dev` passes --features chain-dev-inspector; `chain build`\n' +
+  '# never does, so a release binary contains none of dev_inspector.rs.\n' +
+  'chain-dev-inspector = []';
+
 export function patchCargoToml(raw: string, ctx: ScaffoldContext): string {
   const depLine = `chain-core = { path = "${ctx.coreRelative}" }`;
-  if (/^chain-core = .*/m.test(raw)) {
-    return raw.replace(/^chain-core = .*/m, depLine);
+  let out = /^chain-core = .*/m.test(raw)
+    ? raw.replace(/^chain-core = .*/m, depLine)
+    : raw.replace('serde_json = "1"', `serde_json = "1"\n${depLine}`);
+  if (!/^\[features\]/m.test(out)) {
+    out = out.replace(depLine, `${depLine}\n\n${DEV_INSPECTOR_FEATURE}`);
   }
-  return raw.replace('serde_json = "1"', `serde_json = "1"\n${depLine}`);
+  return out;
 }
 
 export type TrackedFile =
@@ -96,9 +114,14 @@ export type TrackedFile =
 export const TRACKED_FILES: TrackedFile[] = [
   { relPath: "package.json", kind: "patched", patch: patchPackageJson },
   { relPath: "vite.config.ts", kind: "patched", patch: (raw) => patchViteConfig(raw) },
-  { relPath: "src-tauri/tauri.conf.json", kind: "patched", patch: (raw) => patchTauriConf(raw) },
-  { relPath: "src-tauri/Cargo.toml", kind: "patched", patch: patchCargoToml },
-  { relPath: "src-tauri/src/lib.rs", kind: "template", templateName: "lib.rs" },
+  { relPath: ".chain/native/tauri.conf.json", kind: "patched", patch: (raw) => patchTauriConf(raw) },
+  { relPath: ".chain/native/Cargo.toml", kind: "patched", patch: patchCargoToml },
+  { relPath: ".chain/native/src/lib.rs", kind: "template", templateName: "lib.rs" },
+  {
+    relPath: ".chain/native/src/dev_inspector.rs",
+    kind: "template",
+    templateName: "dev_inspector.rs"
+  },
   { relPath: "src/App.css", kind: "template", templateName: "App.css" },
   { relPath: "src/App.tsx", kind: "template", templateName: "App.tsx" },
   { relPath: "src/router.tsx", kind: "template", templateName: "router.tsx" },
@@ -113,7 +136,7 @@ export const TRACKED_FILES: TrackedFile[] = [
   { relPath: "AGENTS.md", kind: "template", templateName: "AGENTS.md" },
   { relPath: "asset/app-icon.svg", kind: "copy", sourcePath: "asset/app-icon.svg" },
   { relPath: "asset/icons", kind: "binary-dir", sourceDir: "asset/icons" },
-  { relPath: "src-tauri/icons", kind: "binary-dir", sourceDir: "asset/icons" }
+  { relPath: ".chain/native/icons", kind: "binary-dir", sourceDir: "asset/icons" }
 ];
 
 /** What a tracked text file's content should be right now, given its

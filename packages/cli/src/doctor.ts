@@ -1,7 +1,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import readline from "node:readline/promises";
 
-function hasCommand(cmd: string): boolean {
+export function hasCommand(cmd: string): boolean {
   try {
     execFileSync(cmd, ["--version"], { stdio: "ignore" });
     return true;
@@ -10,7 +10,7 @@ function hasCommand(cmd: string): boolean {
   }
 }
 
-async function confirm(question: string): Promise<boolean> {
+export async function confirm(question: string): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {

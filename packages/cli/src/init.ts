@@ -81,6 +81,12 @@ export async function init(projectName: string): Promise<void> {
   // our templates.
   fs.rmSync(path.join(target, "src/assets"), { recursive: true, force: true });
 
+  // create-tauri-app always writes the native project to src-tauri/ — chain
+  // relocates it to the hidden .chain/native/ right away so a developer never
+  // sees a "src-tauri" folder even for a moment.
+  fs.mkdirSync(path.join(target, ".chain"), { recursive: true });
+  fs.renameSync(path.join(target, "src-tauri"), path.join(target, ".chain/native"));
+
   console.log("\nWiring @chain/sdk, Tailwind CSS, react-router-dom, and chain-core...");
   const ctx = scaffoldContext(target);
   writeTrackedFiles(ctx);
