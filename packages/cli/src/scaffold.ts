@@ -74,12 +74,32 @@ export function patchViteConfig(raw: string): string {
     .replace("plugins: [react()]", "plugins: [react(), tailwindcss()]");
 }
 
+// The exact subdirectory name the `files` capability writes to — see
+// `dir.join("files")` in templates/lib.rs's `with_files`. Kept in sync by
+// hand between the two; there's no shared constant to import across the
+// Rust/TS boundary for a single string like this.
+const FILES_CAPABILITY_SCOPE = "$APPDATA/files/*";
+
 export function patchTauriConf(raw: string): string {
   const conf = JSON.parse(raw);
   conf.build.beforeDevCommand = "npm run dev:web";
   conf.build.beforeBuildCommand = "npm run build:web";
   // .chain/native/ is one level deeper than src-tauri/ used to be.
   conf.build.frontendDist = "../../dist";
+
+  // Without this, desktop.files.url()'s asset:// URLs produce a
+  // syntactically valid string that WebKit/WebView2 refuse outright
+  // ("Load failed", not a 404) — Tauri's asset protocol requires an
+  // explicit scope allowlist, default-empty. Additive: preserves any
+  // scope entries the developer added themselves.
+  conf.app.security ??= {};
+  const assetProtocol = (conf.app.security.assetProtocol ??= { enable: false, scope: [] });
+  assetProtocol.enable = true;
+  assetProtocol.scope ??= [];
+  if (!assetProtocol.scope.includes(FILES_CAPABILITY_SCOPE)) {
+    assetProtocol.scope.push(FILES_CAPABILITY_SCOPE);
+  }
+
   return JSON.stringify(conf, null, 2) + "\n";
 }
 
@@ -97,6 +117,21 @@ export function patchCargoToml(raw: string, ctx: ScaffoldContext): string {
   if (!/^\[features\]/m.test(out)) {
     out = out.replace(depLine, `${depLine}\n\n${DEV_INSPECTOR_FEATURE}`);
   }
+  // "protocol-asset" isn't one of Tauri's default Cargo features — without
+  // it, the "asset:" URI scheme handler is compiled out entirely (not a
+  // scope/config issue, a missing-handler one), so desktop.files.url()'s
+  // convertFileSrc() output silently fails to load in the webview.
+  out = out.replace(
+    /^tauri = \{ version = "2", features = \[([^\]]*)\] \}$/m,
+    (line: string, featuresRaw: string) => {
+      const features = featuresRaw
+        .split(",")
+        .map((f) => f.trim())
+        .filter(Boolean);
+      if (!features.includes('"protocol-asset"')) features.push('"protocol-asset"');
+      return `tauri = { version = "2", features = [${features.join(", ")}] }`;
+    }
+  );
   return out;
 }
 

@@ -607,9 +607,16 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `@chain/cli` `file:` devDependency that makes them resolvable locally.
   `scaffoldContext()`'s `coreRelative` and `patchTauriConf()`'s
   `frontendDist` are both computed relative to `.chain/native`, not
-  `src-tauri` — see the depth note above before changing either. **Add a
-  new framework-owned file here, not directly in `init.ts`** — otherwise
-  `chain update` won't know about it.
+  `src-tauri` — see the depth note above before changing either.
+  `patchTauriConf()` also sets `app.security.assetProtocol` (`enable:
+  true`, `scope: ["$APPDATA/files/*"]`) and `patchCargoToml()` adds the
+  `"protocol-asset"` Cargo feature to the `tauri` dependency — both
+  required for `desktop.files.url()` to actually work (see the `files`
+  capability's `AGENTS.md` for the real bug this fixes: without either
+  one, `convertFileSrc()` produces a syntactically valid `asset://` URL
+  that the webview refuses outright). **Add a new framework-owned file
+  here, not directly in `init.ts`** — otherwise `chain update` won't know
+  about it.
 - `packages/cli/src/init.ts` — runs `create-tauri-app` (which still
   writes `src-tauri/`), immediately renames that to `.chain/native/`,
   then calls `writeTrackedFiles()`, snapshots `.chain/baseline/`, `npm

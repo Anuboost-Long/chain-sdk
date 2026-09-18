@@ -58,6 +58,34 @@ Read order for a task in this capability:
   numeric string keys, not a JSON array, so `files.ts` explicitly does
   `Array.from(bytes)` before `invoke()`; skipping that step would silently
   fail to deserialize into `Vec<u8>` on the Rust side.
+- **`url()` needs two more things beyond the app's own permission ACL** —
+  found the hard way (see "A real bug" below): the `tauri` dependency
+  needs the `"protocol-asset"` Cargo feature (not a default feature —
+  without it, the `asset://` URI scheme handler is compiled out of the
+  binary entirely, a missing-handler problem, not a config one), and
+  `tauri.conf.json` needs `app.security.assetProtocol.enable: true` plus
+  a `scope` glob covering `$APPDATA/files/*` (Tauri's asset protocol
+  defaults to serving nothing). Both are patched automatically by
+  `patchCargoToml()`/`patchTauriConf()` in `packages/cli/src/scaffold.ts`
+  — an app never needs to set this up by hand.
+
+### A real bug this capability shipped with, and how it was found
+
+The first "verified end to end" pass (see git history) only checked that
+`write()`/`read()`/`delete()` round-tripped bytes correctly and that
+`url()` produced a well-formed string — it never actually loaded the
+resulting URL as an image. mneme-83 (a peer session working on mneme)
+caught the real failure by pasting an actual image in mneme's live
+window: `img.naturalWidth`/`naturalHeight` came back `0`, and
+`fetch(img.src)` threw `TypeError: Load failed` — WebKit's signature for
+a custom-scheme handler refusing a request outright, not a 404. Re-tested
+here against `apps/playground` with the two fixes above: an actual
+`<img>` element (not just a checked-but-unrendered `Image()` object) was
+screenshotted showing a real loaded picture, and `fetch()` returned `200`
+with `content-type: image/png`. **Lesson for next time: "the URL string
+looks right" is not the same claim as "the image loads" — verify the
+literal thing the capability promises, rendered, not just its inputs and
+intermediate values.**
 
 ## Status
 
@@ -76,18 +104,26 @@ Implemented and verified for real on macOS:
 - Verified end to end in `apps/playground`'s actual running window (raw
   `tauri dev --features chain-dev-inspector`, not `chain dev` — playground
   intentionally keeps the old `src-tauri` layout, so `chain dev`'s
-  `checkChainApp` gate doesn't apply to it; a temporary probe rendered its
-  JSON result into the DOM and it was read back via a hand-rolled client
-  speaking the dev-inspector's TCP protocol directly, since `chain
-  inspect` itself also gates on `checkChainApp`). Confirmed for real: a
-  `write()` reference round-tripped through `read()` with byte-exact
-  content, `url()` produced a well-formed `asset://localhost/...` URL
-  encoding the real resolved path, `delete()` succeeded, and the
-  subsequent `read()` rejected with `NOT_FOUND` as designed. The probe
-  (in `apps/playground/src/App.tsx`) and the temporary dev-port bump (to
-  avoid colliding with another already-running dev server on the default
-  port) were both reverted afterward — `git diff --stat apps/playground/`
-  is clean.
+  `checkChainApp` gate doesn't apply to it; a hand-rolled client speaking
+  the dev-inspector's TCP protocol directly, since `chain inspect` itself
+  also gates on `checkChainApp`). Two passes: the first only checked
+  `write()`/`read()`/`delete()`'s byte-exactness and that `url()` produced
+  a well-formed string — it missed the asset-protocol bug below entirely.
+  The second pass, after that fix, rendered an actual `<img>` in the page
+  and confirmed via a real screenshot (a visible loaded picture, not a
+  broken-image icon) plus `fetch(url)` returning `200`/`image/png`. The
+  probe and the temporary dev-port bump (to avoid colliding with another
+  already-running dev server on the default port) were reverted after
+  each pass — `git diff --stat apps/playground/` is clean.
+- **Asset-protocol bug found and fixed** — see "A real bug this
+  capability shipped with" above. Fixed in `packages/cli/src/scaffold.ts`
+  (`patchCargoToml`/`patchTauriConf`) and manually mirrored in
+  `apps/playground`; propagated to `mneme` via `chain update`
+  (`.chain/native/tauri.conf.json` and `.chain/native/Cargo.toml` both
+  updated, no conflicts). mneme's own already-running dev server (a peer
+  session's, left untouched) will need a restart to pick up the
+  Cargo.toml feature change — a running `cargo` process won't recompile
+  that on its own file-watcher.
 
 ## What's NOT done yet (next steps for an agent to pick up)
 
@@ -104,6 +140,10 @@ Implemented and verified for real on macOS:
       reached mneme via `chain update`; the app-level migration to use it
       is mneme's job, not this capability's, but it's the actual point of
       having built this.
+- [ ] Confirm mneme's paste-an-image repro (the one that originally
+      surfaced the asset-protocol bug) actually loads now, after mneme's
+      dev server is restarted to pick up the new Cargo feature — not yet
+      confirmed there specifically, only in `apps/playground`.
 
 ## Rules specific to this capability
 
