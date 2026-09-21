@@ -99,7 +99,7 @@ export async function init(projectName: string): Promise<void> {
     console.log("\n  add   .git (git init)");
   }
 
-  console.log(`\nDone. @chain/sdk is linked via file:${ctx.sdkRelative}`);
+  console.log(`\nDone. @chain/sdk@^${ctx.sdkVersion} and chain-core (pinned git rev) are wired up.`);
   console.log(`Next: cd ${target} && npm run dev`);
   console.log(
     "Later, when chain-sdk's templates change, run `chain update` from inside this app to " +

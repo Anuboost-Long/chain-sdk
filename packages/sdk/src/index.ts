@@ -1,6 +1,9 @@
 import { platform } from "./platform";
 import { storage } from "./storage";
 import { files } from "./files";
+import { http } from "./http";
+import { agentServer } from "./agent-server";
+import { processRunner } from "./process-runner";
 
 /**
  * Public Chain SDK entry point. Applications import `desktop` from
@@ -9,10 +12,28 @@ import { files } from "./files";
 export const desktop = {
   platform,
   storage,
-  files
+  files,
+  http,
+  agentServer,
+  processRunner
 };
 
 export type { ChainError, ChainErrorCode } from "./errors";
-export type { PlatformInfo, ChainOs, ChainArch } from "../../../capabilities/platform/contract";
-export type { StorageApi, Migration, ExecuteResult } from "../../../capabilities/storage/contract";
-export type { FilesApi } from "../../../capabilities/files/contract";
+export type { PlatformInfo, ChainOs, ChainArch } from "./contracts/platform";
+export type { StorageApi, Migration, ExecuteResult } from "./contracts/storage";
+export type { FilesApi } from "./contracts/files";
+export type { HttpApi, HttpResponse } from "./contracts/http";
+export type {
+  AgentServerApi,
+  AgentServerRequest,
+  AgentServerResponse,
+  AgentServerHandler,
+  AgentServerInfo
+} from "./contracts/agent-server";
+export type {
+  ProcessRunnerApi,
+  ProcessHandle,
+  ProcessOutputChunk,
+  ProcessOutputHandler,
+  ProcessExit
+} from "./contracts/process-runner";

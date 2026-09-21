@@ -42,3 +42,6 @@ feature added to this SDK.
 | Platform capability  | [`capabilities/platform/`](capabilities/platform/README.md) | `desktop.platform.getInfo()` end-to-end slice              |
 | Storage capability   | [`capabilities/storage/`](capabilities/storage/README.md)   | `desktop.storage` — SQLite-backed migrate/query/execute    |
 | Files capability     | [`capabilities/files/`](capabilities/files/README.md)       | `desktop.files` — managed local blob storage (write/read/url/delete) |
+| Http capability      | [`capabilities/http/`](capabilities/http/README.md)         | `desktop.http` — a single native-side HTTP GET (status/ok/body)     |
+| AgentServer capability | [`capabilities/agent-server/`](capabilities/agent-server/README.md) | `desktop.agentServer` — a local 127.0.0.1-only HTTP listener so external AI agents can call into the app |
+| ProcessRunner capability | [`capabilities/process-runner/`](capabilities/process-runner/README.md) | `desktop.processRunner` — spawn an executable and stream its stdout/stderr back incrementally |

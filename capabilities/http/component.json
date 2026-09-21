@@ -1,0 +1,16 @@
+{
+  "name": "http",
+  "description": "A single outbound HTTP GET made native-side, returning status/ok/body as text.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/http/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

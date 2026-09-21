@@ -3,6 +3,9 @@
 //! native adapter for the current platform. No Tauri or native types are
 //! allowed to leak back into the Chain SDK across this boundary.
 
+pub mod agent_server;
 pub mod files;
+pub mod http;
 pub mod platform;
+pub mod process_runner;
 pub mod storage;

@@ -2,29 +2,31 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const chainRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..");
+import { CHAIN_CORE_GIT_URL, CHAIN_CORE_REV, CHAIN_SDK_VERSION } from "./publishMeta.js";
+
+// The root of @chain/cli's own installed package — packages/cli, whether
+// that's this monorepo's copy (local dev / `npm link`) or an npm-installed
+// node_modules/@chain/cli elsewhere. Never assume a chain-sdk monorepo
+// sits above this — once published, it doesn't.
+export const chainRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 export function readTemplate(name: string): string {
-  return fs.readFileSync(path.join(chainRoot, "packages/cli/templates", name), "utf8");
+  return fs.readFileSync(path.join(chainRoot, "templates", name), "utf8");
 }
 
 export interface ScaffoldContext {
   target: string;
   name: string;
-  sdkRelative: string;
-  coreRelative: string;
-  cliRelative: string;
+  sdkVersion: string;
+  cliVersion: string;
 }
 
 export function scaffoldContext(target: string): ScaffoldContext {
   const name = path.basename(target);
-  const sdkRelative = path.relative(target, path.join(chainRoot, "packages/sdk"));
-  const coreRelative = path.relative(
-    path.join(target, ".chain/native"),
-    path.join(chainRoot, "crates/core")
-  );
-  const cliRelative = path.relative(target, path.join(chainRoot, "packages/cli"));
-  return { target, name, sdkRelative, coreRelative, cliRelative };
+  const ownPkg = JSON.parse(fs.readFileSync(path.join(chainRoot, "package.json"), "utf8")) as {
+    version: string;
+  };
+  return { target, name, sdkVersion: CHAIN_SDK_VERSION, cliVersion: ownPkg.version };
 }
 
 /**
@@ -51,7 +53,7 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
   pkg.scripts = scripts;
   pkg.dependencies = {
     ...pkg.dependencies,
-    "@chain/sdk": `file:${ctx.sdkRelative}`,
+    "@chain/sdk": `^${ctx.sdkVersion}`,
     "react-router-dom": "^7",
     clsx: "^2"
   };
@@ -59,7 +61,7 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
     ...pkg.devDependencies,
     tailwindcss: "^4",
     "@tailwindcss/vite": "^4",
-    "@chain/cli": `file:${ctx.cliRelative}`
+    "@chain/cli": `^${ctx.cliVersion}`
   };
   return JSON.stringify(pkg, null, 2) + "\n";
 }
@@ -109,8 +111,13 @@ const DEV_INSPECTOR_FEATURE =
   '# never does, so a release binary contains none of dev_inspector.rs.\n' +
   'chain-dev-inspector = []';
 
-export function patchCargoToml(raw: string, ctx: ScaffoldContext): string {
-  const depLine = `chain-core = { path = "${ctx.coreRelative}" }`;
+export function patchCargoToml(raw: string): string {
+  // A pinned git dependency, not a local path: chain-core lives in the
+  // chain-sdk repo, not next to a scaffolded app, so the build has to work
+  // on any machine (CI included), not just one with chain-sdk cloned as a
+  // sibling folder. CHAIN_CORE_REV is baked in at @chain/cli's own build
+  // time — see scripts/sync-meta.mjs.
+  const depLine = `chain-core = { git = "${CHAIN_CORE_GIT_URL}", rev = "${CHAIN_CORE_REV}" }`;
   let out = /^chain-core = .*/m.test(raw)
     ? raw.replace(/^chain-core = .*/m, depLine)
     : raw.replace('serde_json = "1"', `serde_json = "1"\n${depLine}`);

@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-import type { StorageApi, Migration, ExecuteResult } from "../../../capabilities/storage/contract";
+import type { StorageApi, Migration, ExecuteResult } from "./contracts/storage";
 import { chainError } from "./errors";
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

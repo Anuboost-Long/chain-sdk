@@ -6,8 +6,8 @@
     "strict": true,
     "declaration": true,
     "outDir": "dist",
-    "rootDir": "../..",
+    "rootDir": "src",
     "composite": false
   },
-  "include": ["src", "../../capabilities/platform/contract.ts"]
+  "include": ["src"]
 }

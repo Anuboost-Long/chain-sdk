@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 
-import type { FilesApi } from "../../../capabilities/files/contract";
+import type { FilesApi } from "./contracts/files";
 import { chainError } from "./errors";
 
 const NOT_FOUND_PREFIX = "NOT_FOUND: ";

@@ -3,3 +3,8 @@ dist/
 target/
 Cargo.lock
 .DS_Store
+
+# Generated at build/publish time — see each script's own comment.
+packages/sdk/src/contracts/
+packages/cli/asset/
+packages/cli/src/publishMeta.ts

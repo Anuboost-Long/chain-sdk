@@ -162,13 +162,93 @@ instead of depending on real terminal emulation:
   period, and resolves only once the child has actually exited. Both `r`
   and `q` await it before doing anything else — `r` before calling
   `spawnTauri()` again, `q` before `process.exit()`.
+- **Closing the terminal also tears down the child tree.** `dev.ts`
+  listens for `SIGTERM`/`SIGINT`/`SIGHUP` and runs the same `quit()` ->
+  `killChildTree()` path for all three. `SIGHUP` matters specifically
+  because that's what closing the controlling terminal (window/tab
+  closed, SSH session dropped) sends to the foreground process group —
+  without a handler, Node's default disposition for `SIGHUP` is to
+  terminate immediately, which skips `killChildTree()` and orphans the
+  detached `tauri`/Vite/app process tree exactly like the bug the
+  process-group kill above was written to fix.
 - Extra args after `chain dev` are forwarded to `tauri dev` as-is (e.g.
   a scripted `chain dev -- --release`, though scaffolded apps don't need
   this).
-- `@chain/cli` itself is added as a `file:`-linked devDependency of every
-  scaffolded app (same pattern as `@chain/sdk`) so `node_modules/.bin/chain`
-  resolves locally — `npm run dev`/`npm run build` don't depend on `chain`
-  being installed/linked globally on the machine.
+- `@chain/cli` itself is added as a versioned devDependency of every
+  scaffolded app (same pattern as `@chain/sdk`, see "Publishing" below) so
+  `node_modules/.bin/chain` resolves locally — `npm run dev`/`npm run build`
+  don't depend on `chain` being installed/linked globally on the machine.
+
+### Publishing `@chain/sdk` and `@chain/cli`, and how `chain-core` is wired
+
+Early on, `chain init` wired a scaffolded app's `@chain/sdk`/`@chain/cli`
+dependencies as `file:<relative path back to this chain-sdk clone>`, and
+`chain-core` as a Cargo `path = "..."` dependency the same way. Both only
+ever worked on the machine that ran `chain init` — the relative path
+assumed chain-sdk was cloned as a sibling folder at a fixed offset, so
+`npm install`/`cargo build` broke outright anywhere else (a teammate's
+machine, CI, or even this same machine after moving a folder). That's
+exactly the gap that blocks `chain build` from producing something you can
+actually hand off, so this is now fixed:
+
+- **`chain-core`** (`patchCargoToml` in `scaffold.ts`) is a pinned **git**
+  dependency: `chain-core = { git = "<chain-sdk's origin URL>", rev =
+  "<commit>" }`. Cargo resolves a named crate from anywhere in a cloned
+  repo's workspace, so no `path:`/subdirectory trick is needed — this works
+  from any machine with network access, verified against the real
+  `github.com/Anuboost-Long/chain-sdk` remote (see that PR's verification
+  notes).
+- **`@chain/sdk`/`@chain/cli`** are ordinary versioned npm dependencies
+  (`^<version>`) — unlike Cargo, npm's git-dependency spec has no supported
+  way to install a single package out of a subdirectory of a monorepo (only
+  the unrelated `repository.directory` metadata field), so the only real
+  fix was publishing both to the public npm registry.
+- Both of those values — the git URL/rev and `@chain/sdk`'s version — can't
+  be read at `chain init` runtime once `@chain/cli` is installed from npm
+  (there's no chain-sdk checkout sitting next to it any more). They're
+  baked into `@chain/cli`'s own build via `packages/cli/scripts/sync-meta.mjs`,
+  which writes `packages/cli/src/publishMeta.ts` (gitignored, generated —
+  never hand-edit it) from the *actual* chain-sdk repo state, and only ever
+  runs while this really is that repo (`prepare`/`prepublishOnly`, both
+  no-ops on a registry install). `sync-meta.mjs --strict` (what
+  `prepublishOnly` uses) refuses to run against a dirty working tree or a
+  commit that hasn't been pushed to `origin` — publishing `@chain/cli`
+  pinned to a commit nobody else can fetch would silently break every
+  future `chain init`/`chain update`.
+- `@chain/cli` also needs its own `templates/` and icon `asset/` bundled
+  inside the published package (they used to be read via a repo-root-
+  relative `chainRoot`, computed by walking three directories up from
+  `dist/` — correct only when `packages/cli` sits inside this monorepo).
+  `chainRoot` (`scaffold.ts`) now resolves to `@chain/cli`'s own installed
+  location; `packages/cli/scripts/sync-assets.mjs` copies the icons in from
+  the repo-root `asset/` into `packages/cli/asset/` (gitignored, generated)
+  so they ship with the package. Both scripts run automatically via
+  `prepare`/`prepublishOnly` — see `packages/cli/package.json`.
+- `@chain/sdk` itself couldn't be published as-is either: every SDK module
+  imported its capability's structural types straight from
+  `../../../capabilities/<name>/contract.ts`, which only exists inside this
+  monorepo — a published tarball only contains `packages/sdk`'s own
+  directory. `packages/sdk/scripts/sync-contracts.mjs` copies each
+  `capabilities/<name>/contract.ts` into `packages/sdk/src/contracts/`
+  (gitignored, generated — `capabilities/<name>/contract.ts` stays the
+  canonical source, per root `AGENTS.md` rule 1), and every SDK source file
+  imports from there instead. Runs via the same `prepare`/`prepublishOnly`
+  pattern.
+- **To actually publish a new version**: bump `version` in
+  `packages/sdk/package.json` and/or `packages/cli/package.json`, commit
+  and push to `origin`, then `npm publish` from inside each package
+  (`prepublishOnly` regenerates `publishMeta.ts`/`sync-contracts`/
+  `sync-assets` and rejects an unpushed commit automatically). The next
+  `chain init`/`chain update` picks up the new pins automatically — nothing
+  else to wire by hand.
+- Verified end to end without touching the real registry: `npm pack` both
+  packages, installed the tarballs into a throwaway project with no
+  chain-sdk checkout present, and confirmed `@chain/sdk` type-checks
+  standalone and `chain init` (run from the packed `@chain/cli`) writes a
+  `Cargo.toml`/`package.json` with the correct git/version pins — it only
+  stops at `npm install` because `@chain/sdk` isn't actually published yet.
+  Separately confirmed the `chain-core` git dependency itself resolves and
+  builds against the real pushed `origin` remote.
 
 ### `chain build` — release build behind the same condensed output
 
@@ -604,11 +684,11 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `vite.config.ts`, `tauri.conf.json`, `Cargo.toml`), and
   `desiredContent()`. `patchPackageJson` is what wires a scaffolded app's
   `dev`/`build` scripts to `chain dev`/`chain build` and adds the
-  `@chain/cli` `file:` devDependency that makes them resolvable locally.
-  `scaffoldContext()`'s `coreRelative` and `patchTauriConf()`'s
-  `frontendDist` are both computed relative to `.chain/native`, not
-  `src-tauri` — see the depth note above before changing either.
-  `patchTauriConf()` also sets `app.security.assetProtocol` (`enable:
+  versioned `@chain/cli` devDependency that makes them resolvable locally
+  (see "Publishing" above). `patchCargoToml`'s `chain-core` git dependency
+  and `patchTauriConf()`'s `frontendDist` are both specific to
+  `.chain/native`, not `src-tauri` — see the depth note above before
+  changing either. `patchTauriConf()` also sets `app.security.assetProtocol` (`enable:
   true`, `scope: ["$APPDATA/files/*"]`) and `patchCargoToml()` adds the
   `"protocol-asset"` Cargo feature to the `tauri` dependency — both
   required for `desktop.files.url()` to actually work (see the `files`
@@ -626,6 +706,11 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `mergeFile()` (wraps `git merge-file`), `syncTextFile()` (per-file
   merge decision tree), `syncIconDir()` (binary hash-compare), and the
   no-baseline bootstrap path.
+- `packages/cli/scripts/sync-meta.mjs` / `sync-assets.mjs` — see
+  "Publishing" above. Generate `packages/cli/src/publishMeta.ts` and
+  `packages/cli/asset/` respectively (both gitignored); wired into
+  `prepare`/`prepublishOnly` in `packages/cli/package.json`, never run by
+  hand except to debug them.
 - `packages/cli/templates/` — the files `scaffold.ts` copies verbatim
   (with `{{name}}` substitution in `AGENTS.md`): `App.tsx`, `router.tsx`,
   `layouts/RootLayout.tsx`, `components/NavBar.tsx`, `Home.tsx` (the

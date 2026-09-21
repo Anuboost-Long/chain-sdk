@@ -165,4 +165,9 @@ export async function dev(args: string[]): Promise<void> {
 
   process.on("SIGTERM", () => void quit(0));
   process.on("SIGINT", () => void quit(0));
+  // Sent when the controlling terminal closes (window closed, tab killed,
+  // SSH session dropped) — without a handler Node's default SIGHUP action
+  // terminates us immediately, skipping killChildTree and orphaning the
+  // detached tauri/Vite/app process tree.
+  process.on("SIGHUP", () => void quit(0));
 }

@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-import type { PlatformApi, PlatformInfo } from "../../../capabilities/platform/contract";
+import type { PlatformApi, PlatformInfo } from "./contracts/platform";
 import { chainError } from "./errors";
 
 export const platform: PlatformApi = {

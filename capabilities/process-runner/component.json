@@ -1,0 +1,16 @@
+{
+  "name": "process-runner",
+  "description": "Spawns an executable by name + argv array and streams its stdout/stderr back incrementally, with exit-code reporting and the ability to kill it early — never a shell string, never AI-CLI-aware.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/process-runner/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

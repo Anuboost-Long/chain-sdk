@@ -13,3 +13,15 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Default features (default-tls/native-tls) are deliberate, not left at
+# their default by omission — see agent-docs/capabilities/http/research/WINDOWS.md
+# for why native-tls (OS cert store) beats rustls here.
+reqwest = "0.12"
+# Synchronous, minimal-dependency HTTP server — no tokio in the
+# production path, matching chain-dev-inspector's own plain-thread
+# TcpListener approach (dev_inspector.rs) rather than pulling an async
+# runtime into crates/core. See agent-docs/capabilities/agent-server/research/MACOS.md.
+tiny_http = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

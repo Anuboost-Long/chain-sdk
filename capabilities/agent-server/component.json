@@ -1,0 +1,16 @@
+{
+  "name": "agent-server",
+  "description": "A local, 127.0.0.1-only HTTP listener that forwards each request to a JS-registered handler and replies with what it returns — lets an external process (an AI agent) reach app logic running in the webview.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/agent-server/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

@@ -23,11 +23,14 @@ import { desktop } from "@chain/sdk";
 const info = await desktop.platform.getInfo();
 ```
 
-A consuming app depends on it via a relative `file:` path (this is what
-`chain init` sets up automatically — see the `command` doc):
+A consuming app depends on it as an ordinary versioned npm dependency
+(published to the public registry — this is what `chain init` sets up
+automatically; see the `command` doc's "Publishing" section for how the
+version is pinned and why a `file:` link back to this repo doesn't work
+once `@chain/cli` itself is installed from npm):
 
 ```json
-"dependencies": { "@chain/sdk": "file:../chain-sdk/packages/sdk" }
+"dependencies": { "@chain/sdk": "^0.1.0" }
 ```
 
 ## Files to check
@@ -38,8 +41,11 @@ A consuming app depends on it via a relative `file:` path (this is what
   `ChainError` shape every capability must throw.
 - `packages/sdk/src/platform.ts` — the platform capability's SDK-side
   implementation (currently a stub — see `platform-capability` doc).
-- `packages/sdk/tsconfig.json` — `rootDir` is deliberately set to the
-  repo root (not `src`) so it can type-check the cross-package import of
-  `capabilities/*/contract.ts`. Don't "fix" that back to `src` without
-  re-reading why — `tsc --noEmit` will fail with a `TS6059` rootDir error
-  if you do.
+- `packages/sdk/scripts/sync-contracts.mjs` — copies each
+  `capabilities/<name>/contract.ts` into `packages/sdk/src/contracts/`
+  (gitignored, generated) so a published `@chain/sdk` tarball is
+  self-contained; every source file imports from `./contracts/<name>`
+  rather than reaching across the package boundary directly. Runs via
+  `prepare`/`prepublishOnly` — never edit `src/contracts/*.ts` by hand.
+  `capabilities/<name>/contract.ts` stays the canonical source (root
+  `AGENTS.md` rule 1); this only ever copies it.
