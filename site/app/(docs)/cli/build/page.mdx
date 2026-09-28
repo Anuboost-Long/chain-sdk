@@ -1,0 +1,55 @@
+export const metadata = {
+  title: "chain build",
+  description: "Produce a release build and installer of a Chain app for the current OS."
+};
+
+# chain build
+
+<div className="lead">Build an optimized release of your app, packaged for the operating system you're on.</div>
+
+```bash
+chain build
+```
+
+Run it inside your app, or use `npm run build`.
+
+## Example
+
+```text
+$ npm run build
+
+⛓  chain build
+
+  Native     →  compiling tauri (318 crates)
+  Native     →  compiling notes-app (402 crates)
+  Native     ●  built
+
+● Build finished
+```
+
+The packaged app and its installer are written to:
+
+```text
+.chain/native/target/release/bundle/
+├── macos/notes-app.app
+└── dmg/notes-app_0.1.0_aarch64.dmg
+```
+
+## Behavior
+
+- **Release builds are fully optimized,** so they take noticeably longer than `chain dev`. The output is a small,
+  self-contained binary: your users don't need Node.js, Rust, or anything else installed.
+- **It builds for the current OS.** Build on a Mac for macOS, on Windows for Windows.
+- **Development-only tools are excluded.** The [chain inspect](/cli/inspect/) bridge is never compiled into a release
+  build.
+- **Failures end with a summary.** If the build fails, it ends with `✘ Build failed` and repeats the error that caused
+  it.
+- **Release builds are cached in the app.** If `.chain/native/target` passes 8 GB, the build ends with a one-line
+  reminder to run [chain clean](/cli/clean/).
+- **Ctrl+C stops everything,** including the compiler processes it started.
+- **Extra arguments pass through** to `tauri build`, for example a `--target` to build for a specific architecture.
+
+## Troubleshooting
+
+**`Target x86_64-apple-darwin is not installed`.** You asked for an architecture your Rust toolchain can't build yet.
+Add it with `rustup target add x86_64-apple-darwin`.

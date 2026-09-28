@@ -1,0 +1,127 @@
+export const metadata = {
+  title: "Core concepts",
+  description: "Capabilities, normalized errors, capability detection, and status levels."
+};
+
+# Core concepts
+
+<div className="lead">
+  Four ideas explain every Chain API. Each capability page links back here instead of repeating them.
+</div>
+
+## Capabilities
+
+A **capability** is one native feature exposed to your app, like storage, files, or running a process. Each one is a
+property on the `desktop` object:
+
+```ts
+import { desktop } from "@chain/sdk";
+
+desktop.platform; // OS and runtime information
+desktop.storage; // the app's own SQLite database
+desktop.files; // stored binary files
+desktop.http; // native-side HTTP GET
+desktop.agentServer; // a localhost endpoint for external agents
+desktop.processRunner; // run programs and stream their output
+```
+
+Capabilities are added one at a time, each driven by a real app that needed it, not built speculatively. That's why
+the list is short and each API is narrow: every method exists because something was actually built with it. See
+[Contributing](/contributing/) for how a new one gets proposed.
+
+## Errors
+
+Every capability method that can fail rejects with the same shape:
+
+```ts
+interface ChainError {
+  code: ChainErrorCode;
+  message: string; // readable detail, often the OS's own message
+  nativeCode?: string; // the raw platform error code, for debugging only
+  debugDetails?: unknown; // extra native context, for debugging only
+}
+```
+
+`code` is always one of seven values, on every platform:
+
+| Code                | Meaning                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `UNSUPPORTED`       | Not available here: running outside a Chain app, or on a platform not yet supported. |
+| `PERMISSION_DENIED` | The OS refused, for example a file that isn't executable or a privileged port.      |
+| `NOT_FOUND`         | The thing you referred to doesn't exist: a file reference, a command.                |
+| `UNAVAILABLE`       | A resource is busy or unreachable: a port in use, a host that can't be reached.     |
+| `INVALID_ARGUMENT`  | The input was rejected before anything ran: an empty command, a malformed URL.      |
+| `CANCELLED`         | The operation was cancelled before it finished.                                     |
+| `NATIVE_FAILURE`    | Anything else the OS reported. `message` carries the original text.                 |
+
+Branch on `code`, show `message`, and ignore `nativeCode` and `debugDetails` in app logic. Those two are for debugging
+and aren't guaranteed to match across platforms.
+
+```ts
+import { desktop, type ChainError } from "@chain/sdk";
+
+try {
+  const bytes = await desktop.files.read(reference);
+  showPreview(bytes);
+} catch (e) {
+  const error = e as ChainError;
+  if (error.code === "NOT_FOUND") {
+    removeBrokenAttachment(reference);
+  } else {
+    showError(`Couldn't open the file. ${error.message}`);
+  }
+}
+```
+
+### Resolving isn't the same as succeeding
+
+Some calls resolve even when the outcome isn't what you wanted, because Chain successfully _observed_ it.
+`desktop.http.get()` resolves for a 404, with `ok: false`. A process that exits with code 1 still resolves
+`handle.exited`. Promises reject only when Chain couldn't do its part at all, and your app decides what the result
+means.
+
+## Capability detection, not platform detection
+
+Check what's available, never which OS you're on. Code like `if (os === "windows")` breaks the day a capability ships
+on Windows, or behaves differently on a Windows version you didn't test.
+
+Every call already rejects with `UNSUPPORTED` when it can't run, so the simplest check is to try it:
+
+```ts
+async function loadInfo() {
+  try {
+    return await desktop.platform.getInfo();
+  } catch (e) {
+    if ((e as ChainError).code === "UNSUPPORTED") return null; // e.g. opened in a plain browser
+    throw e;
+  }
+}
+```
+
+This also makes your UI work when the same frontend is opened in a browser during development: calls reject cleanly
+with `UNSUPPORTED` instead of crashing.
+
+## Events over polling
+
+When the OS can notify about a change, Chain exposes it as a subscription or callback rather than asking you to check
+repeatedly with `setInterval`. `desktop.processRunner.run()` is an example: output arrives through the `onOutput`
+callback as the process prints it, and `handle.exited` resolves when the process ends. Nothing needs polling.
+
+## Status levels
+
+Each capability carries two separate statuses, shown at the top of its page.
+
+**API status** is about how settled the API shape is:
+
+- **Draft.** The API works but may still change. Every capability is Draft today.
+- **Experimental.** The shape is close to final, and changes will be rare and announced.
+- **Stable.** Covered by compatibility guarantees. An API only becomes Stable after it has been verified on more than one
+  operating system.
+
+**Platform support** is about where it runs:
+
+- **Tested.** Implemented and passing its shared contract tests on that OS.
+- **Experimental.** Implemented and verified end to end in a real app, but contract tests don't cover it yet.
+- **Partial.** Some methods work on that OS, others don't yet.
+- **Not yet.** Planned, not implemented. Calls reject with `UNSUPPORTED`.
+- **Not planned.** No work is scheduled on that OS for now.

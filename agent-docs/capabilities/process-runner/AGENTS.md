@@ -68,9 +68,18 @@ Read order for a task in this capability:
   std method (SIGKILL on Unix, `TerminateProcess` on Windows). The real
   Windows-specific risk in this capability is entirely on the *spawn*
   side (npm `.cmd`/`.ps1` shims), not kill — see `research/WINDOWS.md`.
-- **No stdin/PTY/persistent process** — each `run()` is one-shot,
-  matching mneme's actual usage (one process per chat turn, resumed via
-  `--resume <session_id>` as a fresh invocation, not a long-lived pipe).
+- **No interactive stdin/PTY/persistent process** — each `run()` is
+  one-shot, matching mneme's actual usage (one process per chat turn,
+  resumed via `--resume <session_id>` as a fresh invocation, not a
+  long-lived pipe).
+- **One-shot stdin payload via `options.stdin`**, added for mneme's
+  request 12 (`docs/chain-sdk-requests/12-process-runner-stdin.md`:
+  module/course-sized context outgrows argv on every OS). Written once on
+  its own thread, concurrently with the stdout/stderr readers (no
+  pipe-buffer deadlock), then closed. Write errors (EPIPE from a child
+  that exits early) are swallowed, not surfaced. Omitted means
+  `Stdio::null()`, unchanged, not an empty pipe. Deliberately a string
+  only (no `Uint8Array`) and no `handle.write()`: nothing asked for them.
 - **`id` is generated client-side (JS), not native-side.** A fast
   process (spawn → print → exit) can finish within a single IPC round
   trip. If native generated the id and handed it back from
@@ -151,6 +160,58 @@ capability works there at all against an npm-installed CLI.
   and process-tree/orphan behavior (see CONTRACT.md's Non-goals on
   process groups).
 
+- **`PATH` resolution uses the login shell, not the app's raw inherited
+  env, on macOS/Linux.** A GUI app launched by launchd/Finder (a
+  packaged build) inherits a minimal system `PATH` that never sources
+  `.zshrc`/`.zprofile`, so a bare command like `claude`/`codex`/`gemini`
+  installed via nvm/homebrew/asdf resolved under `chain dev` (which
+  inherits the terminal's full `PATH`) but failed `NOT_FOUND` once
+  packaged — reported by mneme against agent-chat's CLI picker (its
+  `detectAgents()` spawns these bare names via
+  `desktop.processRunner.run`). Fixed by resolving the real login-shell
+  `PATH` once (spawn `$SHELL -lic '...'`, cached via `OnceLock` for the
+  process's lifetime) and substituting it into the child's env instead
+  of leaving `Command::new` to resolve against the app's own `PATH`. See
+  `research/MACOS.md`'s "GUI-launched apps don't get the login-shell
+  PATH" for the `${PATH}`-must-be-braced shell-quoting gotcha this hit
+  along the way. Deliberately stayed internal to PATH resolution — no
+  new caller-facing env/cwd option was added; `CONTRACT.md`'s existing
+  "no environment-variable or working-directory options (yet)" non-goal
+  still holds.
+
+- **`options.stdin` (request 12), verified on macOS.** 4 more unit
+  tests in `process_runner.rs` (11 total): payload echoed back by `cat`
+  (non-ASCII and `\0` included) with a clean exit proving EOF, a 4 MB
+  payload through `cat` without deadlock, a child that exits without
+  reading a 1 MB payload still resolving with its real code, and no
+  payload giving an immediate EOF. Also run end to end in
+  `apps/playground`'s real window through the SDK and IPC (see
+  `research/MACOS.md`). Propagated to mneme with `chain update` (only
+  `.chain/native/src/lib.rs` changed); `cargo check` and `tsc --noEmit`
+  clean there. Not verified on Windows, where pipe semantics differ
+  (`ERROR_NO_DATA`/`ERROR_BROKEN_PIPE` instead of EPIPE); both should
+  surface as ignored write errors, but that's unconfirmed.
+
+### File-reference arguments (mneme request 14) — verified on macOS, 28 September 2026
+
+- `args` elements may be `{ fileReference }` (`ProcessArg` in
+  `contract.ts`). `templates/lib.rs`'s untagged `ProcessArg` enum is
+  resolved through `FilesState` with `chain_core::files::Files::process_path`
+  **before** `chain_core::process_runner::run` is called, so the Rust
+  spawn code is unchanged and still takes `&[String]`. Unit tests:
+  `process_path_resolves_only_existing_managed_files`,
+  `extended_length_prefix_only_at_max_path`.
+- Verified in a throwaway `chain init` app under `chain dev`: `cat` with
+  `[{ fileReference }]` printed the managed file's exact bytes;
+  `/bin/sh -c 'echo $#; printf "[%s]" "$@"' sh --image {ref}` printed
+  `2` and `[--image][/Users/…/Application Support/dev.chain.reqtest/files/<id>.png]`
+  (exactly one argv element, space in the path intact); an unknown
+  reference and `../../etc/passwd` both rejected `NOT_FOUND`, and the
+  `touch` that would have run with the unknown reference never created
+  its file (nothing spawned); plain string args unchanged.
+- Windows `\\?\` handling is unit-tested only — see
+  `research/WINDOWS.md`.
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Decide between the Windows spawn approaches in
@@ -162,6 +223,8 @@ capability works there at all against an npm-installed CLI.
       do NOT mark `component.json`/the contract stable on macOS alone
       (rule 3); this capability's Windows risk is real, not
       boilerplate-only, per `research/WINDOWS.md`.
+- [ ] Verify `options.stdin` on Windows: a multi-megabyte payload, and a
+      child exiting before reading it all, against a real npm-installed CLI.
 - [ ] Add contract tests under `capabilities/process-runner/tests/` —
       currently the only tests are `crates/core/src/process_runner.rs`'s
       Rust unit tests, same gap every other capability here still has.
@@ -174,6 +237,9 @@ capability works there at all against an npm-installed CLI.
       aggregation from the stdout stream, session persistence in
       `desktop.storage`) on top of this — all explicitly mneme's job per
       the request doc, not this capability's.
+
+- [ ] Verify `{ fileReference }` arguments on Windows, including a
+      ≥ 260-char path in `\\?\` form against a real CLI.
 
 ## Rules specific to this capability
 
@@ -188,6 +254,7 @@ capability works there at all against an npm-installed CLI.
   NOT line-buffered" above. If a real need for line-buffered delivery
   shows up, that's a contract change to discuss, not something to sneak
   in as an implementation convenience.
-- Never add stdin, PTY, or persistent-process support without a real,
-  separate capability request driving it (rule 7) — this one is
-  deliberately one-shot-process-only.
+- Never add interactive stdin (`handle.write()`), PTY, or
+  persistent-process support without a real, separate capability request
+  driving it (rule 7) — this one is deliberately one-shot-process-only.
+  `options.stdin` is write-once-then-close and must stay that way.

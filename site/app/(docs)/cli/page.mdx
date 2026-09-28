@@ -1,0 +1,46 @@
+export const metadata = {
+  title: "CLI",
+  description: "Every chain command at a glance."
+};
+
+# CLI
+
+<div className="lead">
+  The <code>chain</code> command creates apps, runs and builds them, keeps them up to date with the framework, and
+  manages their database.
+</div>
+
+```bash
+chain --help      # list every command
+chain --version   # print the CLI version
+```
+
+## Commands
+
+| Command                                       | What it does                                                             | Run from      |
+| --------------------------------------------- | ------------------------------------------------------------------------ | ------------- |
+| [`chain init <name>`](/cli/init/)             | Create a new app in a new folder.                                        | Anywhere      |
+| [`chain dev`](/cli/dev/)                      | Run the app with hot reload and condensed output.                        | Inside an app |
+| [`chain build`](/cli/build/)                  | Build a release binary and installer.                                    | Inside an app |
+| [`chain update`](/cli/update/)                | Merge framework updates into the app, keeping your edits.                | Inside an app |
+| [`chain inspect`](/cli/inspect/)              | Drive the running dev window from the terminal.                          | Inside an app |
+| [`chain migration add <name>`](/cli/migration/) | Generate a migration from your schema classes' changes.                | Inside an app |
+| [`chain database update`](/cli/database/)     | Apply pending migrations, or revert to an earlier version.               | Inside an app |
+| [`chain database list`](/cli/database/)       | Show each migration and whether it has been applied.                     | Inside an app |
+| [`chain clean`](/cli/clean/)                  | Free disk space used by build caches.                                    | Inside an app |
+| [`chain doctor`](/cli/doctor/)                | Check for, and optionally install, the Rust toolchain.                   | Anywhere      |
+
+## A typical day
+
+```bash
+chain dev                        # work on the app
+chain migration add add-tags     # changed a schema class? generate the migration
+chain database update            # apply it without restarting the app
+chain inspect                    # check the UI from the terminal
+chain build                      # ship it
+```
+
+## You rarely type `dev` and `build`
+
+A new app's `package.json` maps `npm run dev` to `chain dev` and `npm run build` to `chain build`, and installs the CLI
+as a dev dependency. Anyone who clones your app can run it with plain npm scripts, without installing `chain` globally.

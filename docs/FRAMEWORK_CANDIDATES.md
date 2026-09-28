@@ -159,7 +159,9 @@ as Platform/System)
 Used by:
 
 - Mneme (real consumer — requested it; see
-  `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo)
+  `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo,
+  plus `12-process-runner-stdin.md` for the one-shot `options.stdin`
+  payload)
 
 Generalizable:
 Yes — spawning a named executable with an argv array and streaming its

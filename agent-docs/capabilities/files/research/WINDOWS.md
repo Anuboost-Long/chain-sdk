@@ -53,3 +53,24 @@ there is no Windows-specific Rust code in `crates/core/src/files.rs`.
       active and confirm no spurious lock failures under normal use.
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and this
       capability's `component.json` once confirmed.
+
+## `pick()` on Windows (request 16) — not yet verified
+
+`rfd`'s Windows backend (`win_cid`) shows the Common Item Dialog
+(`IFileOpenDialog`) with the parent `HWND` from `set_parent`, which
+makes it modal to that window — Windows has no sheet presentation, and
+an owned dialog is the platform's equivalent. The async variant runs the
+dialog on its own thread, so the Tauri command still doesn't block the
+UI thread.
+
+- [ ] Confirm the dialog is owned by the app window (stays on top of it,
+      disables it) rather than free-floating.
+- [ ] Confirm extension filters show up in the dialog's type dropdown.
+- [ ] Confirm cancel resolves `[]` and a multi-select returns every file.
+
+## `save()` on Windows (request 17) — not yet verified
+
+Same rfd backend as `pick()`: `IFileSaveDialog`, owned by the parent
+`HWND`. Check that it's owned by the app window, that the type filter
+shows, that the OS's own overwrite prompt appears, and that a name
+typed without an extension gets the first allowed one appended.

@@ -38,6 +38,7 @@ export interface NativeOutputState {
   crateCount: number;
   warnings: number;
   errors: number;
+  lastErrorLine: string | null;
   inDiagnosticBlock: boolean;
 }
 
@@ -48,6 +49,7 @@ export function freshState(): NativeOutputState {
     crateCount: 0,
     warnings: 0,
     errors: 0,
+    lastErrorLine: null,
     inDiagnosticBlock: false
   };
 }
@@ -134,6 +136,22 @@ export function processLine(rawLine: string, state: NativeOutputState, color: Co
     maybePrintStatus("Frontend", state.frontend, color);
     return;
   }
+  // Tauri CLI's own diagnostics: `Error <msg>` / `Warn <msg>`, no colon.
+  // Single-line banners, so they don't open a diagnostic block.
+  if (/^\s*Warn\s/.test(line)) {
+    state.warnings++;
+    console.log(`  ${color(ansi.yellow, line)}`);
+    return;
+  }
+  if (/^\s*Error\s/.test(line)) {
+    state.errors++;
+    state.lastErrorLine = line.trim();
+    state.native.status = "error";
+    state.native.detail = "failed";
+    maybePrintStatus("Native", state.native, color);
+    console.log(`  ${color(ansi.red, line)}`);
+    return;
+  }
   if (/^\s*warning:/i.test(line)) {
     state.warnings++;
     state.inDiagnosticBlock = true;
@@ -142,6 +160,7 @@ export function processLine(rawLine: string, state: NativeOutputState, color: Co
   }
   if (/error(\[|:)/i.test(line)) {
     state.errors++;
+    state.lastErrorLine = line.trim();
     state.inDiagnosticBlock = true;
     if (state.native.status !== "ready") {
       state.native.status = "error";
@@ -153,4 +172,11 @@ export function processLine(rawLine: string, state: NativeOutputState, color: Co
   // Unrecognized lines (Tauri CLI Info/Warn banners, stray tool output, ...)
   // still surface — condensing status never means swallowing output.
   console.log(`  ${color(ansi.dim, line)}`);
+}
+
+/** The closing line after `tauri build`/`tauri dev` exits non-zero, repeating
+ * the last captured error so the cause isn't lost in the scrollback. */
+export function printFailureSummary(label: string, code: number, state: NativeOutputState, color: Color): void {
+  console.log(`\n${color(ansi.red, `✘ ${label} failed (exit ${code}).`)}`);
+  if (state.lastErrorLine) console.log(`  ${color(ansi.red, state.lastErrorLine)}`);
 }

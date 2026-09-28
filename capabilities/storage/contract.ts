@@ -5,7 +5,12 @@
 
 export interface Migration {
   version: number;
+  /** Applied going up. */
   sql: string;
+  /** Recorded in the migration history. Generated migrations always have one. */
+  name?: string;
+  /** Reverts `sql`. Only `chain database update <target>` runs it; the app never migrates down. */
+  down?: string;
 }
 
 export interface ExecuteResult {

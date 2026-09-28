@@ -48,3 +48,49 @@ same reasoning `storage` already established for `rusqlite`.
   revisit if it comes up (the id-based naming makes two writes never
   collide, but a concurrent read/delete of the same reference from two
   calls isn't explicitly locked beyond what the OS gives for free).
+
+## `pick()` — the open panel as a window-attached sheet (request 16)
+
+Source: mneme's `docs/chain-sdk-requests/16-native-file-picker-sheet.md`.
+
+**The problem is in wry, not the web layer.** An `<input type="file">`
+in the webview reaches wry's WKUIDelegate
+(`wry-0.57.0/src/wkwebview/class/wry_web_view_ui_delegate.rs:100-124`,
+unchanged in 0.55.1), which builds an `NSOpenPanel` and calls
+`runModal()`. That presents a free-floating app-modal window (no sheet
+animation) and spins a nested run loop on the main thread until it
+closes. Safari/Chrome use `beginSheetModalForWindow:completionHandler:`
+instead — the sheet macOS animates out of the window's title bar. No
+web-side option changes which one wry calls.
+
+**Chosen: `rfd` 0.17's `AsyncFileDialog` with `set_parent(window)`.**
+Verified by reading `rfd-0.17.2/src/backend/macos/modal_future.rs`, not
+assumed: `ModalFuture::new` takes the parent `NSWindow` (derived from the
+raw `AppKitWindowHandle` via `window_from_raw_window_handle`), and when
+`NSApplication.isRunning` and a window exists, it `run_on_main`s a block
+that calls the panel's `begin_modal` → `beginSheetModalForWindow_completionHandler`
+(`file_dialog/panel_ffi.rs:72`). The completion handler fills shared
+state and wakes the Rust future — the main thread is never blocked. The
+`runModal()` path is only the fallback when the app isn't running or no
+window exists (it prints a "fallback to sync dialog" line to stderr).
+
+- `set_parent` takes anything implementing raw-window-handle 0.6's
+  `HasWindowHandle + HasDisplayHandle`, which Tauri's `Window` does — so
+  `crates/core` depends on `raw-window-handle`'s traits, never on Tauri
+  (the Tauri command in `templates/lib.rs` passes its `tauri::Window` in).
+- Extension filters map to `NSOpenPanel.allowedContentTypes` inside rfd.
+- `rfd` already depends on the same `objc2`/`objc2-app-kit` family Tauri
+  2 uses, so it adds little on macOS. Its default features only pull
+  Linux portal/Wayland crates on Linux targets.
+- Bytes are read after the sheet closes with `std::fs::read` — the
+  picked path never leaves Rust (the `files` contract's no-paths rule).
+- Returning bytes: a JSON `Vec<u8>` (what `files_read` does) turns 20 MB
+  into ~70 MB of JSON text. `files_pick` returns a raw
+  `tauri::ipc::Response` instead — a small JSON header followed by the
+  files' bytes back to back, which JS receives as an `ArrayBuffer`.
+
+### Verified
+
+See `AGENTS.md`'s Status section for the end-to-end run (sheet
+attached to the window, cancel → `[]`, a real pick → correct name/size/
+bytes).

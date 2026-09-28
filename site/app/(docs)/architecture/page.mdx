@@ -1,0 +1,75 @@
+export const metadata = {
+  title: "How Chain works",
+  description: "The layers a Chain call passes through, and what each one is responsible for."
+};
+
+# How Chain works
+
+<div className="lead">
+  Your app calls one TypeScript API. Underneath it, a Rust core and a native runtime do the platform-specific work, and
+  each layer can change without the one above it noticing.
+</div>
+
+## The layers
+
+```text
+Your app            React + TypeScript. Imports only @chain/sdk.
+   │
+Chain SDK           @chain/sdk: the typed desktop.* API.
+   │
+Chain Core          Rust: routing, permission checks, error normalization.
+   │
+Chain Runtime       Tauri today. Designed to be replaceable.
+   │
+Native adapters     macOS today, Windows next, Linux later.
+```
+
+Each layer has one job:
+
+| Layer         | Responsible for                                                                                          | Never does                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Your app      | UI, state, and deciding what to do with results.                                                         | Import Tauri, Rust bindings, or OS APIs.            |
+| Chain SDK     | The public API shape and its TypeScript types. Checks it's running inside a Chain app.                   | Expose anything platform-specific.                  |
+| Chain Core    | Coordinating capabilities, serializing data, and turning native failures into a shared `ChainError`.     | Leak native objects (Swift, .NET, Tauri) upward.    |
+| Chain Runtime | Carrying calls between the webview and native code.                                                      | Define the API. It can be swapped out.              |
+| OS            | The actual work: files on disk, sockets, processes, system information.                                  |                                                     |
+
+## Following one call
+
+Here is what happens when your app runs `desktop.files.write(bytes)`:
+
+1. **Your app** calls `desktop.files.write(bytes, { extension: "png" })` and awaits a string.
+2. **Chain SDK** checks that it's running inside a Chain app. In a plain browser tab, it rejects immediately with
+   `UNSUPPORTED` instead of failing in some harder-to-read way.
+3. **Chain Core** receives the bytes, generates the file's reference itself (your app never picks a path), and writes
+   the file into the app's own data folder.
+4. **The OS** does the write. If it fails, say because the disk is full, Core turns the native error into
+   `ChainError { code: "NATIVE_FAILURE" }` and keeps the OS message in `message`.
+5. **Your app** gets back either the reference string or that one error shape, on every OS.
+
+## Why the layers are strict
+
+The rule that apps only import `@chain/sdk` is what makes the rest possible:
+
+- **The runtime can change.** Chain uses Tauri today. Because no app imports Tauri directly, moving to a different
+  runtime changes Chain's internals, not your code.
+- **Platform differences stay underneath.** A capability's API is designed around what it means to an app developer,
+  not around what a native API happens to be called on one OS.
+- **Errors are predictable.** Every capability rejects with the same `ChainError` shape and the same seven codes,
+  however differently macOS and Windows describe the failure.
+
+## Every capability has three contracts
+
+Before any code is written for a capability, its API is pinned down three ways:
+
+1. **Meaning.** A written contract says what each call does, when it rejects, and what it deliberately doesn't do.
+   The Behavior and Errors sections on each capability page come from it.
+2. **Types.** A `contract.ts` file defines the exact TypeScript shape. The API section on each capability page shows
+   that file as is.
+3. **Tests.** Shared tests every platform's implementation has to pass before the capability counts as done on that
+   platform.
+
+## What runs where
+
+Rust is needed only on the machine that **builds** a Chain app. The app you ship is an ordinary compiled binary, and
+your users never install Rust, Node.js, or anything else.

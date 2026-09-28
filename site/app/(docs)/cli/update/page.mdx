@@ -1,0 +1,64 @@
+export const metadata = {
+  title: "chain update",
+  description: "Pull framework updates into an existing Chain app without losing your edits."
+};
+
+# chain update
+
+<div className="lead">
+  Bring an existing app up to date with the latest Chain templates. Your own edits are merged, never overwritten.
+</div>
+
+```bash
+chain update
+```
+
+Run it inside your app.
+
+## Example
+
+A new Chain version adds a capability and changes the native project's config. You've also edited that config to make
+the window larger:
+
+```text
+$ chain update
+Updating notes-app from chain-sdk...
+
+  update   .chain/native/src/lib.rs
+  update   .chain/native/tauri.conf.json
+  conflict src/pages/Home.tsx — resolve the <<<<<<< markers by hand
+
+3 file(s) updated.
+
+1 file(s) have merge conflicts — resolve the <<<<<<< / ======= / >>>>>>> markers before running npm install or building:
+  - src/pages/Home.tsx
+```
+
+Your larger window size survives in `tauri.conf.json`, merged with the new settings. `Home.tsx` conflicts because you
+and the template both changed the same lines.
+
+Review the changes with `git diff`, resolve any conflicts like you would after a git merge, and commit.
+
+## How it merges
+
+Every file Chain generated has a snapshot of how it looked after the last `init` or `update`, kept in
+`.chain/baseline/`. `update` compares three versions of each file: that snapshot, your current file, and the new
+template.
+
+| Situation                                   | What happens                                                    |
+| ------------------------------------------- | --------------------------------------------------------------- |
+| The template didn't change                  | Nothing. Your file is left alone.                               |
+| You never edited the file                   | It's replaced with the new version.                             |
+| Both changed, in different places           | Both sets of changes are merged automatically.                  |
+| Both changed the same lines                 | Git-style `<<<<<<<` / `>>>>>>>` conflict markers are written into the file. |
+| A new file was added to the template        | It's copied in.                                                 |
+| You deleted a file Chain generated          | It stays deleted.                                               |
+| You replaced an icon                        | Your icon is kept.                                              |
+
+## Behavior
+
+- **Nothing is ever reset.** The worst case is conflict markers you resolve by hand.
+- **Commit before you run it,** so `git diff` shows exactly what the update changed.
+- **An app with no `.chain/baseline/` yet** (created before `update` existed) is handled on its first run: `update`
+  records your current files as the starting point and changes nothing. Merges work from the next run on.
+- **Old layouts are migrated.** An app that still has a `src-tauri/` folder is moved to `.chain/native/` first.

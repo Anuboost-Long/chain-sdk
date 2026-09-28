@@ -25,6 +25,24 @@ impl std::fmt::Display for StorageError {
 pub struct Migration {
     pub version: i64,
     pub sql: String,
+    /// Recorded in `_chain_migrations` for history. Generated migrations
+    /// always carry one; hand-written ones may not. A `down` field, if
+    /// present, is ignored here — only the CLI's `chain database update
+    /// <target>` ever migrates down.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// FNV-1a 64-bit of the migration's `sql`, hex — recorded when a migration
+/// is applied so `chain migration list` can flag one edited afterwards.
+/// packages/cli/src/schema/history.ts computes the identical value.
+pub fn migration_checksum(sql: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in sql.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 #[derive(Debug, Serialize)]
@@ -49,14 +67,7 @@ impl Database {
         let conn = Connection::open(path).map_err(|e| StorageError(e.to_string()))?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| StorageError(e.to_string()))?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS _chain_migrations (\
-                version INTEGER PRIMARY KEY, \
-                applied_at TEXT NOT NULL DEFAULT (datetime('now'))\
-            )",
-            [],
-        )
-        .map_err(|e| StorageError(e.to_string()))?;
+        ensure_history_table(&conn)?;
         Ok(Self(Mutex::new(conn)))
     }
 
@@ -76,22 +87,31 @@ impl Database {
                 .map_err(|e| StorageError(e.to_string()))?
         };
 
-        let mut sorted: Vec<&Migration> = migrations.iter().collect();
+        let mut sorted: Vec<&Migration> = migrations.iter().filter(|m| !applied.contains(&m.version)).collect();
+        if sorted.is_empty() {
+            return Ok(());
+        }
         sorted.sort_by_key(|m| m.version);
 
-        for m in sorted {
-            if applied.contains(&m.version) {
-                continue;
-            }
-            conn.execute_batch(&m.sql)
-                .map_err(|e| StorageError(format!("migration {}: {}", m.version, e)))?;
-            conn.execute(
-                "INSERT INTO _chain_migrations (version) VALUES (?1)",
-                rusqlite::params![m.version],
-            )
-            .map_err(|e| StorageError(e.to_string()))?;
-        }
-        Ok(())
+        // Migrations rebuild tables (create new, copy, drop old, rename), the
+        // procedure in https://www.sqlite.org/lang_altertable.html. Two
+        // connection settings get in its way, so both are switched for the
+        // duration and restored afterwards:
+        // - foreign_keys: the DROP would fire ON DELETE actions in child tables.
+        // - legacy_alter_table: off, SQLite (3.26+) re-validates every trigger
+        //   in the database on RENAME, and fails on one that mentions a table
+        //   that's mid-rebuild. mneme's hand-written migration 6 hits exactly
+        //   this on a fresh database.
+        let foreign_keys = pragma_flag(&conn, "foreign_keys")?;
+        let legacy_alter_table = pragma_flag(&conn, "legacy_alter_table")?;
+        set_pragma(&conn, "foreign_keys", false)?;
+        let result = sorted.iter().try_for_each(|m| {
+            set_pragma(&conn, "legacy_alter_table", true)?;
+            apply(&conn, m)
+        });
+        set_pragma(&conn, "legacy_alter_table", legacy_alter_table)?;
+        set_pragma(&conn, "foreign_keys", foreign_keys)?;
+        result
     }
 
     pub fn query(&self, sql: &str, params: &[JsonValue]) -> Result<Vec<JsonValue>, StorageError> {
@@ -131,6 +151,64 @@ impl Database {
     }
 }
 
+/// Creates `_chain_migrations`, or adds the `name`/`checksum` columns to
+/// one created before they existed. Mirrored by the CLI (history.ts).
+fn ensure_history_table(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS _chain_migrations (\
+            version INTEGER PRIMARY KEY, \
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')), \
+            name TEXT, \
+            checksum TEXT\
+        )",
+    )
+    .map_err(|e| StorageError(e.to_string()))?;
+    let columns: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('_chain_migrations')")
+            .map_err(|e| StorageError(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| StorageError(e.to_string()))?;
+        rows.collect::<Result<_, _>>().map_err(|e| StorageError(e.to_string()))?
+    };
+    for column in ["name", "checksum"] {
+        if !columns.iter().any(|c| c == column) {
+            conn.execute_batch(&format!("ALTER TABLE _chain_migrations ADD COLUMN {column} TEXT"))
+                .map_err(|e| StorageError(e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn pragma_flag(conn: &Connection, name: &str) -> Result<bool, StorageError> {
+    conn.query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
+        .map_err(|e| StorageError(e.to_string()))
+}
+
+fn set_pragma(conn: &Connection, name: &str, on: bool) -> Result<(), StorageError> {
+    conn.execute_batch(&format!("PRAGMA {name} = {}", if on { "ON" } else { "OFF" }))
+        .map_err(|e| StorageError(e.to_string()))
+}
+
+/// Runs one migration's SQL, then records it. A failure part-way through a
+/// migration that opened its own transaction (generated ones do) rolls it
+/// back, so the connection is never left inside an open transaction.
+fn apply(conn: &Connection, m: &Migration) -> Result<(), StorageError> {
+    if let Err(e) = conn.execute_batch(&m.sql) {
+        if !conn.is_autocommit() {
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+        return Err(StorageError(format!("migration {}: {}", m.version, e)));
+    }
+    conn.execute(
+        "INSERT INTO _chain_migrations (version, name, checksum) VALUES (?1, ?2, ?3)",
+        rusqlite::params![m.version, m.name, migration_checksum(&m.sql)],
+    )
+    .map_err(|e| StorageError(e.to_string()))?;
+    Ok(())
+}
+
 fn json_to_sql(v: &JsonValue) -> SqlValue {
     match v {
         JsonValue::Null => SqlValue::Null,
@@ -161,27 +239,29 @@ fn sql_to_json(v: SqlValue) -> JsonValue {
 mod tests {
     use super::*;
 
-    fn temp_db() -> Database {
-        let path = std::env::temp_dir().join(format!("chain-storage-test-{}.db", std::process::id()));
+    fn temp_path(test: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("chain-storage-{test}-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        Database::open(&path).expect("open should succeed")
+        path
+    }
+
+    fn temp_db() -> Database {
+        Database::open(&temp_path("round-trip")).expect("open should succeed")
+    }
+
+    fn migration(version: i64, sql: &str) -> Migration {
+        Migration { version, sql: sql.into(), name: Some(format!("m{version}")) }
     }
 
     #[test]
     fn migrate_query_execute_round_trip() {
         let db = temp_db();
-        db.migrate(&[Migration {
-            version: 1,
-            sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)".into(),
-        }])
-        .expect("migration should succeed");
+        db.migrate(&[migration(1, "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")])
+            .expect("migration should succeed");
 
         // re-running the same migration must be a no-op, not an error
-        db.migrate(&[Migration {
-            version: 1,
-            sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)".into(),
-        }])
-        .expect("re-applying an already-applied migration should be a no-op");
+        db.migrate(&[migration(1, "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")])
+            .expect("re-applying an already-applied migration should be a no-op");
 
         let result = db
             .execute(
@@ -195,5 +275,69 @@ mod tests {
         let rows = db.query("SELECT id, title FROM notes", &[]).expect("query should succeed");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["title"], JsonValue::String("first note".into()));
+    }
+
+    #[test]
+    fn rebuilds_a_table_that_another_tables_trigger_mentions() {
+        // mneme's migration 6 shape: rebuilding `parent` while a trigger on
+        // `child` mentions it. Fails with legacy_alter_table off.
+        let db = Database::open(&temp_path("legacy-rename")).unwrap();
+        db.migrate(&[
+            migration(1, "CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                          CREATE TABLE child (parent_id INTEGER);
+                          CREATE TRIGGER child_insert BEFORE INSERT ON child BEGIN
+                            SELECT RAISE(ABORT, 'no parent') WHERE NOT EXISTS (SELECT 1 FROM parent WHERE id = NEW.parent_id);
+                          END;"),
+            migration(2, "CREATE TABLE parent_new (id INTEGER PRIMARY KEY, name TEXT);
+                          INSERT INTO parent_new (id) SELECT id FROM parent;
+                          DROP TABLE parent;
+                          ALTER TABLE parent_new RENAME TO parent;"),
+        ])
+        .expect("rebuild should succeed");
+        let legacy = db.query("PRAGMA legacy_alter_table", &[]).unwrap();
+        assert_eq!(legacy[0]["legacy_alter_table"], JsonValue::from(0), "restored afterwards");
+    }
+
+    #[test]
+    fn checksum_matches_fnv1a_reference_vectors() {
+        assert_eq!(migration_checksum(""), "cbf29ce484222325");
+        assert_eq!(migration_checksum("a"), "af63dc4c8601ec8c");
+    }
+
+    #[test]
+    fn records_name_and_checksum_and_upgrades_old_history_tables() {
+        let path = temp_path("history");
+        {
+            // A database from before name/checksum existed.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE _chain_migrations (version INTEGER PRIMARY KEY, \
+                 applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 INSERT INTO _chain_migrations (version) VALUES (1);",
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        db.migrate(&[migration(1, "SELECT 1"), migration(2, "CREATE TABLE t (x TEXT)")]).unwrap();
+        let rows = db.query("SELECT version, name, checksum FROM _chain_migrations ORDER BY version", &[]).unwrap();
+        assert_eq!(rows[0]["name"], JsonValue::Null);
+        assert_eq!(rows[1]["name"], JsonValue::String("m2".into()));
+        assert_eq!(rows[1]["checksum"], JsonValue::String(migration_checksum("CREATE TABLE t (x TEXT)")));
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_and_restores_foreign_keys() {
+        let db = Database::open(&temp_path("rollback")).unwrap();
+        db.execute("PRAGMA foreign_keys = ON", &[]).unwrap();
+        let err = db
+            .migrate(&[migration(1, "BEGIN; CREATE TABLE t (x TEXT); INSERT INTO missing VALUES (1); COMMIT;")])
+            .unwrap_err();
+        assert!(err.0.contains("migration 1"));
+        // Rolled back: no table, no history row, not stuck in a transaction.
+        assert!(db.query("SELECT * FROM t", &[]).is_err());
+        assert!(db.query("SELECT * FROM _chain_migrations", &[]).unwrap().is_empty());
+        db.execute("INSERT INTO _chain_migrations (version) VALUES (99)", &[]).unwrap();
+        let fk = db.query("PRAGMA foreign_keys", &[]).unwrap();
+        assert_eq!(fk[0]["foreign_keys"], JsonValue::from(1));
     }
 }

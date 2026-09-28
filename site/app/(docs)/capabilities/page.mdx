@@ -1,0 +1,38 @@
+import { CapabilityTable } from "@/components/capability";
+
+export const metadata = {
+  title: "Capabilities",
+  description: "Every Chain capability, what it's for, and where it runs today."
+};
+
+# Capabilities
+
+<div className="lead">
+  Everything your app can ask the operating system for, through <code>desktop</code>. Each page leads with a working
+  example, then the exact API, how it behaves, and the errors it can raise.
+</div>
+
+<CapabilityTable />
+
+Support levels are read from each capability's metadata in the repository when this site is built, so this table always
+matches the code. [Core concepts](/concepts/#status-levels) explains what each level means.
+
+## Choosing a capability
+
+| You want to                                                           | Use                                                 |
+| --------------------------------------------------------------------- | --------------------------------------------------- |
+| Show which OS or CPU the app is on                                    | [Platform](/capabilities/platform/)                 |
+| Keep structured data: records, settings, history                      | [Storage](/capabilities/storage/)                   |
+| Keep binary data: images, attachments, exports                        | [Files](/capabilities/files/)                       |
+| Download a web page from another site                                 | [Http](/capabilities/http/)                         |
+| Let an AI agent or another local program call into your app           | [Agent server](/capabilities/agent-server/)         |
+| Run a command-line tool and show its output as it arrives             | [Process runner](/capabilities/process-runner/)     |
+
+## Every capability follows the same rules
+
+- **Import from `@chain/sdk` only.** No capability needs you to touch Tauri or native code.
+- **Failures reject with a `ChainError`.** One of seven codes, on every OS. See [Errors](/concepts/#errors).
+- **Outside a Chain app, calls reject with `UNSUPPORTED`.** Your UI can still load in a plain browser during
+  development.
+- **Nothing is on by default.** Capabilities with side effects, like starting a server, only run when your code calls
+  them.

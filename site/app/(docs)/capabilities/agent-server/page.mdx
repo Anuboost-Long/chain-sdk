@@ -1,0 +1,109 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Agent server",
+  description: "desktop.agentServer: a localhost HTTP endpoint that AI agents and other local programs can call."
+};
+
+# Agent server
+
+<div className="lead">
+  Open an HTTP endpoint on <code>127.0.0.1</code> so programs running outside your app, like an AI coding agent, can
+  call functions that live in your app's UI code. Chain handles the socket; your JavaScript handles each request.
+</div>
+
+<PlatformSupport name="agent-server" />
+
+## Example
+
+Expose two tools to a local agent, behind a setting the user turns on:
+
+```ts title="src/lib/agent-tools.ts"
+import { desktop, type AgentServerRequest, type AgentServerResponse } from "@chain/sdk";
+
+import { listNotes, addNote } from "./notes";
+
+function json(status: number, data: unknown): AgentServerResponse {
+  return { status, headers: { "content-type": "application/json" }, body: JSON.stringify(data) };
+}
+
+async function handle(request: AgentServerRequest): Promise<AgentServerResponse> {
+  if (request.method === "GET" && request.path === "/notes") {
+    return json(200, await listNotes());
+  }
+  if (request.method === "POST" && request.path === "/notes") {
+    const { title } = JSON.parse(request.body) as { title: string };
+    return json(201, { id: await addNote(title) });
+  }
+  return json(404, { error: `No route for ${request.method} ${request.path}` });
+}
+
+export async function enableAgentTools() {
+  const { port } = await desktop.agentServer.start(handle, { port: 47821 });
+  return port;
+}
+
+export function disableAgentTools() {
+  return desktop.agentServer.stop();
+}
+```
+
+With the server running, any local program can call it:
+
+```bash
+curl http://127.0.0.1:47821/notes
+curl -X POST http://127.0.0.1:47821/notes -d '{"title":"Written by an agent"}'
+```
+
+### Speaking MCP
+
+Chain doesn't implement the Model Context Protocol itself. It hands your handler the raw request, so you can parse
+MCP's JSON-RPC messages in your app and route `tools/call` to your own functions. That keeps a fast-moving protocol out
+of the framework and lets the same endpoint serve any other local protocol too.
+
+## API
+
+<ContractSource name="agent-server" />
+
+### `start(handler, options?)`
+
+Starts listening on `127.0.0.1` and resolves with the port once it's ready.
+
+- `options.port` asks for a specific port, useful when your settings screen shows a fixed address. Leave it out (or
+  pass `0`) to let the OS pick a free one.
+- Every request reaches `handler` as `{ method, path, headers, body }`, with `body` as raw text. Whatever `handler`
+  resolves with (`status`, optional `headers`, `body`) is sent back as the HTTP response.
+
+### `stop()`
+
+Stops listening and frees the port. It's safe to call when nothing is running.
+
+## Behavior
+
+- **Local only, always.** The server binds to `127.0.0.1` and there's no option to change that, so it can't be reached
+  from the network, even by mistake.
+- **Your app decides when it runs.** Chain never starts it on its own. Putting it behind a setting like "Allow agent
+  access" is the expected pattern.
+- **One server per app run.** To change handler or port, call `stop()` and then `start()` again.
+- **Requests are handled one at a time.** Each waits for your handler to reply before the next is served, which suits
+  human-paced agent tool calls.
+- **A broken handler doesn't take the server down.** If `handler` throws, that caller gets a `500`. If it takes too
+  long, that caller gets a `504`. The server keeps running for the next request.
+
+## Errors
+
+| Code                | When                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `UNAVAILABLE`       | A server is already running, or the requested port is taken.                          |
+| `PERMISSION_DENIED` | The OS refused the port, for example a privileged one.                                 |
+| `INVALID_ARGUMENT`  | `options.port` is outside the valid TCP port range.                                    |
+| `NATIVE_FAILURE`    | Any other failure while starting or serving. `message` has the details.                |
+| `UNSUPPORTED`       | Called outside a Chain app.                                                            |
+
+## Not included
+
+- **No authentication.** Any program on the same machine can call a running server. Only start it when the user has
+  chosen to allow that.
+- **No network access, no HTTPS, no CORS.** It's for local programs speaking plain HTTP, not browsers or remote clients.
+- **No built-in protocol.** MCP, JSON-RPC, and routing live in your handler.
+- **No request logging.** Keep an audit trail in your app if you need one.

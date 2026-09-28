@@ -1,0 +1,78 @@
+export const metadata = {
+  title: "chain inspect",
+  description: "Drive a running Chain dev window from the terminal: evaluate code, click, read text, take screenshots."
+};
+
+# chain inspect
+
+<div className="lead">
+  Control your running app from a second terminal: run JavaScript in its window, click elements, read text, wait for the
+  UI, and take screenshots. Useful for scripted checks and for AI agents working on your app.
+</div>
+
+```bash
+chain inspect                      # interactive prompt
+chain inspect --eval "<js>"        # run one command and exit
+```
+
+Run it inside your app while [chain dev](/cli/dev/) is running.
+
+## Example
+
+```text
+# terminal 1
+$ chain dev
+
+# terminal 2, same folder
+$ chain inspect
+⛓  chain inspect — waiting for dev inspector...
+connected. `help` for commands, `quit` to exit.
+
+inspect> eval document.title
+"Notes"
+inspect> click-text About
+OK: A
+inspect> wait h1
+found: h1
+inspect> text h1
+"About this app"
+inspect> screenshot ./about.png
+saved: ./about.png (184212 bytes)
+inspect> quit
+```
+
+One command at a time, for scripts and CI:
+
+```bash
+chain inspect --eval "document.querySelectorAll('li').length"
+chain inspect --screenshot ./editor.png --selector ".editor"
+```
+
+## Commands
+
+| Command                                           | What it does                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `eval <js>`                                       | Run JavaScript in the window and print the result.                   |
+| `click <selector>`                                | Click the first element matching a CSS selector.                     |
+| `click-text <text>`                               | Click the button or link whose text matches.                         |
+| `text [selector]`                                 | Print the text of an element, or of the whole page.                  |
+| `wait <selector>`                                 | Wait until an element matching the selector exists.                  |
+| `type <selector> <text>`                          | Type text into an input.                                             |
+| `rect`                                            | Print the window's position and size.                                |
+| `screenshot <path> [--selector <sel>]`            | Save a PNG of the window, or of one element. macOS only.             |
+| `drag <x1> <y1> <x2> <y2> [--selector <sel>]`     | Perform a real mouse drag, for example to select text. macOS only.   |
+| `quit`                                            | Disconnect.                                                          |
+
+The one-shot flags are `--eval`, `--rect`, `--screenshot`, and `--drag`.
+
+## Behavior
+
+- **Development builds only.** The bridge `inspect` talks to is compiled in by `chain dev` and never included in a
+  release build.
+- **Local only.** It listens on `127.0.0.1` with a random port and a per-run token, and speaks plain TCP, which a web
+  page can't open. A website you visit can't drive your dev app.
+- **Screenshots and drags need one-time macOS permissions** (Screen Recording and Accessibility) for your terminal.
+  They're granted to `chain inspect` itself, so they don't need approving again every time your app rebuilds.
+- **Drags use `cliclick`.** If it isn't installed, `inspect` offers to install it with Homebrew and asks first.
+- **Why not Playwright?** Chain renders in the OS's own webview, not a bundled Chromium, so there's no DevTools
+  protocol for Playwright to attach to. `inspect` fills that role.

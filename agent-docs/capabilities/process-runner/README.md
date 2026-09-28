@@ -19,6 +19,35 @@ wrapper over `std::process::Child::kill()` (already portable —
 `SIGKILL` on Unix, `TerminateProcess` on Windows, no per-OS code
 needed).
 
+On macOS/Linux, `run()` substitutes the user's real login-shell `PATH`
+(resolved once, on first use, by spawning `$SHELL -lic 'echo
+...${PATH}...'` and caching the result for the process's lifetime) into
+the spawned child's environment, instead of leaving `Command::new` to
+resolve `command` against the app's own inherited `PATH`. This matters
+because a GUI app launched by launchd/Finder — a packaged `chain build`
+double-clicked from Finder/Dock — inherits a minimal system `PATH` that
+never sources `.zshrc`/`.zprofile`, so a bare command like `"claude"`
+that's only reachable via nvm/homebrew/asdf resolves fine under `chain
+dev` (which inherits the terminal's full login-shell `PATH`) but fails
+`NOT_FOUND` in the packaged build — the standard macOS GUI-app `PATH`
+problem, same one Electron apps hit. See
+`research/MACOS.md`'s "GUI-launched apps don't get the login-shell
+PATH" for the shell-quoting gotcha this ran into (`$PATH` immediately
+followed by a literal suffix merges into one variable name unless
+braced as `${PATH}`) and why the resolution runs on a background
+thread with a timeout rather than blocking `run()` synchronously.
+
+`run()` also takes an optional stdin payload (`stdin: Option<String>`,
+`options.stdin` on the JS side), for input too large for argv. When
+given, the child's stdin is piped, a third thread writes the whole
+payload and then drops the pipe, and the child sees EOF. That thread runs
+alongside the stdout/stderr readers, so a multi-megabyte payload can't
+deadlock against a child that prints before it has read all its input.
+A write error, usually a broken pipe from a child that exited without
+reading everything, is ignored: `on_exit` still reports how the process
+ended. Without a payload, stdin stays the null device, as it always was
+(not an empty pipe, which some CLIs treat differently).
+
 `packages/cli/templates/lib.rs`'s `process_runner_run`/
 `process_runner_kill` bridge this to the webview via
 `chain://process-output`/`chain://process-exit` events — simpler than
@@ -57,6 +86,16 @@ const handle = await desktop.processRunner.run(
 
 const exit = await handle.exited; // { code: number | null; killed: boolean }
 
+// Input too large for argv (a whole course's content, say) goes on stdin:
+// written once, then closed so the child sees EOF.
+await desktop.processRunner.run("claude", ["-p", task], onOutput, { stdin: courseText });
+
+// A desktop.files reference becomes one argv element: that managed
+// file's absolute path, resolved natively — JS never sees it. Unknown
+// references reject NOT_FOUND before anything spawns.
+const image = await desktop.files.write(pngBytes, { extension: "png" });
+await desktop.processRunner.run("codex", ["exec", "-i", { fileReference: image }, prompt], onOutput);
+
 // To stop it early (e.g. a chat UI's "stop generating" button):
 await handle.kill();
 ```
@@ -80,12 +119,13 @@ wiring needed per app.
 - `agent-docs/capabilities/process-runner/CONTRACT.md` — the semantic
   contract, especially "The two open design questions" (no AI-CLI
   awareness, no compiled-in executable allowlist — that's Phase 28's
-  job) and the Non-goals (no shell interpretation ever, no stdin/PTY, no
+  job), `options.stdin` (one-shot payload, EPIPE isn't an error) and
+  the Non-goals (no shell interpretation ever, no interactive stdin/PTY, no
   line-buffering, no stream-interleaving guarantee). Check this before
   changing behavior.
 - `capabilities/process-runner/contract.ts` — the exact types
-  (`ProcessRunnerApi`, `ProcessHandle`, `ProcessOutputChunk`,
-  `ProcessExit`); change this and every implementation below together,
+  (`ProcessRunnerApi`, `ProcessRunOptions`, `ProcessHandle`,
+  `ProcessOutputChunk`, `ProcessExit`); change this and every implementation below together,
   never one without the others.
 - `agent-docs/capabilities/process-runner/AGENTS.md` — what's already
   decided and why (especially the client-side-id race-avoidance

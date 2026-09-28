@@ -13,8 +13,12 @@ The public shape is deliberately close to the metal: `migrate(migrations)`
 runs pending SQL migrations (tracked in an internal `_chain_migrations`
 table, safe to call every app startup), `query(sql, params)` returns rows
 as plain JSON objects, `execute(sql, params)` runs writes and returns
-`{ rowsAffected, lastInsertId }`. No ORM, no typed models — the
-consuming app (mneme) owns its own schema and query logic on top of this.
+`{ rowsAffected, lastInsertId }`. No ORM or query builder — the app writes
+its queries in SQL. Its **schema**, though, is declared as `@Table`
+classes (`@chain/sdk/schema`), and `chain migration add <name>` generates
+each migration (Up and Down SQL) from changes to them, EF Core style —
+see `agent-docs/framework/command/README.md`. The classes also type the
+rows: `query<Course>(…)`.
 
 Requested by mneme as its first real capability gap beyond `platform` —
 see `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo for
@@ -22,19 +26,34 @@ the original ask and native-module survey that kicked this off.
 
 ## How to use it
 
+Declare the schema, then let the CLI write the migration:
+
+```ts
+// src/lib/db/schema/note.ts
+import { PrimaryKey, Table } from "@chain/sdk/schema";
+
+@Table()
+export class Note {
+  @PrimaryKey({ autoIncrement: true }) id!: number;
+  title!: string;
+}
+```
+
+```bash
+chain migration add create-notes   # writes db/migrations/0001-create-notes.ts (+ .model.json)
+```
+
 ```ts
 import { desktop } from "@chain/sdk";
+import { migrations } from "./lib/db/migrations";
+import type { Note } from "./lib/db/schema";
 
-await desktop.storage.migrate([
-  { version: 1, sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)" }
-]);
+await desktop.storage.migrate(migrations); // on startup; applies what hasn't run
 
-const result = await desktop.storage.execute("INSERT INTO notes (title) VALUES (?1)", ["hello"]);
+const result = await desktop.storage.execute("INSERT INTO note (title) VALUES (?1)", ["hello"]);
 // result: { rowsAffected: 1, lastInsertId: 1 }
 
-const rows = await desktop.storage.query<{ id: number; title: string }>(
-  "SELECT id, title FROM notes"
-);
+const rows = await desktop.storage.query<Note>("SELECT id, title FROM note");
 ```
 
 Every already-scaffolded app gets this automatically via `chain update`

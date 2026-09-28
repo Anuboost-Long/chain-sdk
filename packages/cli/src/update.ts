@@ -52,8 +52,11 @@ function mergeFile(
     return { merged: result, conflicted: false };
   } catch (error) {
     const e = error as { status?: number; stdout?: string };
-    if (e.status === 1 && typeof e.stdout === "string") {
-      // exit 1 = merged with conflict markers, not a real failure
+    // git merge-file's exit status is the *number of conflicts* (1 or
+    // more), not always 1 — a file with several conflicting regions (e.g.
+    // both "dependencies" and "devDependencies" diverged) exits >1. Only
+    // a negative/missing status is a real merge-file failure.
+    if (typeof e.status === "number" && e.status > 0 && typeof e.stdout === "string") {
       return { merged: e.stdout, conflicted: true };
     }
     throw error;

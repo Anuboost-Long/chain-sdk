@@ -1,0 +1,158 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Files",
+  description: "desktop.files: store binary files under an opaque reference and show them in the UI."
+};
+
+# Files
+
+<div className="lead">
+  Store images, attachments, and other binary data in your app's own folder. You get back a reference string to save
+  wherever you like, and use it later to read the bytes, show the file, or delete it.
+</div>
+
+<PlatformSupport name="files" />
+
+## Example
+
+An image attachment flow: the user picks a file, it's stored, the reference goes into your database, and the image is
+shown without loading its bytes into JavaScript.
+
+```tsx title="src/components/AttachImage.tsx"
+import { desktop } from "@chain/sdk";
+import { useState, type ChangeEvent } from "react";
+
+export function AttachImage({ onAttached }: Readonly<{ onAttached: (reference: string) => void }>) {
+  const [preview, setPreview] = useState<string>();
+
+  async function handleChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const extension = file.name.split(".").pop() ?? "bin";
+    const reference = await desktop.files.write(bytes, { extension });
+
+    await desktop.storage.execute("INSERT INTO attachments (file_ref, mime_type) VALUES (?1, ?2)", [
+      reference,
+      file.type
+    ]);
+    setPreview(await desktop.files.url(reference));
+    onAttached(reference);
+  }
+
+  return (
+    <>
+      <input type="file" accept="image/*" onChange={handleChange} />
+      {preview && <img src={preview} alt="Attached image" />}
+    </>
+  );
+}
+```
+
+### Choosing files with the OS picker
+
+`pick()` opens the system file picker attached to your app's window (a sheet on macOS), instead of the free-floating
+window an `<input type="file">` opens. You get each file's name and bytes:
+
+```ts
+const picked = await desktop.files.pick({ multiple: true, extensions: ["png", "jpg", "pdf"] });
+if (picked.length === 0) return; // cancelled
+
+for (const { name, size, bytes } of picked) {
+  const reference = await desktop.files.write(bytes, { extension: name.split(".").pop() });
+  await saveAttachment({ name, size, reference });
+}
+```
+
+### Saving where the user chooses
+
+`save()` shows the system save panel, attached to the window, on every call. Chain writes the bytes to the location
+the user picks and tells you the file name they settled on:
+
+```ts
+const saved = await desktop.files.save(new TextEncoder().encode(backupJson), {
+  suggestedName: `backup-${today}.json`,
+  extensions: ["json"]
+});
+if (saved) showMessage(`Backup saved as ${saved.name}.`);
+```
+
+Later, removing the attachment:
+
+```ts
+await desktop.files.delete(reference);
+await desktop.storage.execute("DELETE FROM attachments WHERE file_ref = ?1", [reference]);
+```
+
+## API
+
+<ContractSource name="files" />
+
+### `write(bytes, options?)`
+
+Saves `bytes` and resolves with a new reference. Chain generates the reference; you never choose a file name or path.
+Store it as is and pass it back unchanged.
+
+`options.extension` (letters and digits, no leading dot) becomes part of the reference, so a stored `png` keeps a
+recognizable extension when it's displayed.
+
+### `read(reference)`
+
+Resolves with the file's bytes as a `Uint8Array`.
+
+### `url(reference)`
+
+Resolves with a URL the webview can load directly, for `<img src>`, `<video src>`, or `<a href>`. The bytes stay out of
+JavaScript memory, which matters for large images.
+
+### `delete(reference)`
+
+Deletes the file. It's safe to call more than once: deleting a reference that's already gone still resolves.
+
+### `pick(options?)`
+
+Shows the OS file picker and resolves with `{ name, size, bytes }` for each chosen file, or `[]` if the user cancels.
+
+- `multiple` allows choosing more than one file. The default is one.
+- `extensions` limits which files can be chosen, like `["png", "pdf"]`: letters and digits, no leading dot. Leave it
+  out to allow any file.
+- Nothing is stored: pass the bytes to `write()` to keep a file.
+- On macOS the picker slides out of the window's title bar as a sheet, and your UI keeps running while it's open.
+
+### `save(bytes, options?)`
+
+Shows the OS save panel and writes `bytes` where the user chooses. Resolves with `{ name }`, the file name only, or
+`null` if the user cancels.
+
+- The panel appears on every call. Nothing is saved to a remembered location without asking.
+- `suggestedName` pre-fills the name. Only the file name part is used, so it can't choose the folder.
+- `extensions` limits the file type. If the user's name has none of them, the first is added.
+- Replacing an existing file is confirmed by the panel itself.
+
+## Behavior
+
+- **Chain never hands you a real file path, and never accepts one.** Only references it generated. This keeps your app
+  clear of platform path problems, like Windows' path-length limit, and keeps files inside the app's folder.
+- **No open step.** The storage folder is created the first time any `desktop.files` method runs.
+- **Keep your own index.** There's no way to list stored files, so save each reference alongside the metadata you need
+  (name, MIME type, size), typically with [Storage](/capabilities/storage/).
+
+## Errors
+
+| Code             | When                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `NOT_FOUND`      | `read` or `url` got a reference that isn't one Chain issued, or whose file was deleted. |
+| `INVALID_ARGUMENT` | A `pick` or `save` extension isn't letters and digits.                                |
+| `UNAVAILABLE`    | `pick` or `save` was called while a picker or save panel is already open.               |
+| `NATIVE_FAILURE` | Any other I/O failure, such as a full disk or a folder `save` can't write to. `message` has the OS's text. |
+| `UNSUPPORTED`    | Called outside a Chain app.                                                             |
+
+## Not included
+
+- **No real paths,** in or out. This is deliberate and won't change.
+- **No listing** of stored files. Your app tracks its own references.
+- **No streaming.** Files are read and written whole.
+- **No metadata** like type or dates. Only `pick` reports a size. Store what you need yourself.
+- **No folder picking, and no "show in Finder" after saving.**

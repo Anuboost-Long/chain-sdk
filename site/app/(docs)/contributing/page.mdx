@@ -1,0 +1,58 @@
+import { githubUrl } from "@/lib/site";
+
+export const metadata = {
+  title: "Contributing",
+  description: "How new Chain capabilities get proposed and built."
+};
+
+# Contributing
+
+<div className="lead">
+  Chain grows one capability at a time, each driven by an app that actually needed it. Here is how a new one gets
+  proposed and built.
+</div>
+
+## Propose a capability from a real need
+
+Every capability in Chain exists because a real app hit a wall the web layer couldn't get past: opening a socket,
+running a process, reading a file without a path. Proposals work the same way. Describe:
+
+- **What your app is trying to do,** in terms of the feature, not a native API.
+- **Why the webview can't do it,** or what goes wrong when you try.
+- **The smallest API that would unblock you,** and what you explicitly don't need.
+
+Open an issue on <a href={githubUrl}>GitHub</a> with those three things.
+
+## How a capability gets built
+
+Each capability goes through the same steps, in order:
+
+1. **Research** how each operating system actually behaves, and write the findings down.
+2. **Write the contract** in plain language and as TypeScript types, before any implementation.
+3. **Implement** it in the SDK and in Chain Core.
+4. **Wire it into the app templates,** so every app gets it through `chain update`.
+5. **Verify it for real,** end to end, in a running app.
+6. **Document it,** including a page on this site.
+
+The full process, written for contributors and the AI agents that help build Chain, is in
+[`docs/CAPABILITY_WORKFLOW.md`](https://github.com/Anuboost-Long/chain-sdk/blob/main/docs/CAPABILITY_WORKFLOW.md).
+
+## Rules every capability follows
+
+- **Named for app developers.** Methods are named for what they mean to an app, never after a Swift, C#, or Tauri API.
+- **Never shaped by one OS.** An API isn't marked Stable until it has been verified on more than one operating system.
+- **Errors are normalized.** Native errors become a `ChainError` code at the Rust boundary.
+- **Events over polling.** If the OS can notify about a change, the API exposes it as a callback or subscription.
+- **Nothing speculative.** No capability, and no option on one, is added without a real app that needs it.
+
+## Working on this site
+
+This site lives in `site/` in the repository. Each capability page reads its API block and platform support straight
+from `capabilities/<name>/`, so those stay current on their own. When you change what a capability does, update its
+page's example, Behavior, and Errors sections in the same change.
+
+```bash
+cd site
+npm install
+npm run dev
+```

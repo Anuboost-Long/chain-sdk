@@ -1,0 +1,60 @@
+export const metadata = {
+  title: "chain init",
+  description: "Create a new Chain app with React, routing, Tailwind, and the SDK wired up."
+};
+
+# chain init
+
+<div className="lead">Create a new desktop app in a new folder, ready to run.</div>
+
+```bash
+chain init <name>
+```
+
+## Example
+
+```bash
+cd ~/Projects
+chain init notes-app
+cd notes-app
+npm run dev
+```
+
+## What you get
+
+A React and TypeScript app, built with Vite, with:
+
+- **`@chain/sdk` installed,** and a home page that already calls `desktop.platform.getInfo()` so you can see the full
+  path to native code working.
+- **Tailwind CSS** configured.
+- **Page routing** with `react-router-dom`: a root layout, a nav bar, and Home and About pages to replace.
+- **Chain's placeholder icon** as the app icon, in `asset/`. Replace it with your own.
+- **`npm run dev` and `npm run build`** wired to [chain dev](/cli/dev/) and [chain build](/cli/build/).
+- **A git repository,** initialized, with dependencies installed.
+
+```text
+notes-app/
+├── src/
+│   ├── App.tsx
+│   ├── router.tsx
+│   ├── layouts/RootLayout.tsx
+│   ├── components/NavBar.tsx
+│   └── pages/
+│       ├── Home.tsx
+│       └── About.tsx
+├── asset/
+├── .chain/
+│   ├── native/      the native project (Rust, Tauri config, icons)
+│   └── baseline/    a snapshot chain update merges against
+└── package.json
+```
+
+## Behavior
+
+- **`<name>` is a folder name,** created inside the folder you run the command from. It isn't a path.
+- **It only creates new apps.** If the folder already exists, `init` stops with an error instead of writing into it.
+  To bring an existing app up to date, use [chain update](/cli/update/).
+- **The native project is tucked away in `.chain/native/`,** so your working folders are ordinary frontend ones. You
+  can still edit things there, like the window size in `tauri.conf.json`, and `chain update` keeps your changes.
+- **Commit `.chain/`.** It's part of your app, not build output. `.chain/baseline/` is what lets `chain update` merge
+  instead of overwrite.

@@ -140,6 +140,71 @@ fn files_delete(
     with_files(&app, &state, |files| files.delete(&reference))
 }
 
+fn to_pick_command_error(e: chain_core::files::PickError) -> String {
+    use chain_core::files::PickError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Other(m) => m,
+    }
+}
+
+// Always shows the save panel (a sheet on macOS); native writes the bytes
+// where the user chose. Returns the chosen file name, or null on cancel —
+// never a path. See CONTRACT.md's save() section.
+#[tauri::command]
+async fn files_save(
+    window: tauri::Window,
+    bytes: Vec<u8>,
+    suggested_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    let options = chain_core::files::SaveOptions {
+        suggested_name,
+        extensions: extensions.unwrap_or_default(),
+    };
+    chain_core::files::save(&window, &bytes, &options).await.map_err(to_pick_command_error)
+}
+
+#[derive(serde::Serialize)]
+struct PickedFileHeader {
+    name: String,
+    size: usize,
+}
+
+// Async so the picker (a sheet on macOS, attached to the calling window)
+// never blocks the UI thread while it's open. Returns raw bytes rather
+// than JSON: a u32 little-endian header length, a JSON header
+// `[{ name, size }]`, then every file's bytes back to back — JSON number
+// arrays would turn a 20 MB PDF into ~70 MB of text. The SDK's
+// `files.pick()` decodes it (packages/sdk/src/files.ts).
+#[tauri::command]
+async fn files_pick(
+    window: tauri::Window,
+    multiple: Option<bool>,
+    extensions: Option<Vec<String>>,
+) -> Result<tauri::ipc::Response, String> {
+    let options = chain_core::files::PickOptions {
+        multiple: multiple.unwrap_or(false),
+        extensions: extensions.unwrap_or_default(),
+    };
+    let picked = chain_core::files::pick(&window, &options).await.map_err(to_pick_command_error)?;
+
+    let header: Vec<PickedFileHeader> = picked
+        .iter()
+        .map(|file| PickedFileHeader { name: file.name.clone(), size: file.bytes.len() })
+        .collect();
+    let header = serde_json::to_vec(&header).map_err(|e| e.to_string())?;
+    let total: usize = picked.iter().map(|file| file.bytes.len()).sum();
+    let mut body = Vec::with_capacity(4 + header.len() + total);
+    body.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    body.extend_from_slice(&header);
+    for file in &picked {
+        body.extend_from_slice(&file.bytes);
+    }
+    Ok(tauri::ipc::Response::new(body))
+}
+
 // Bridges the http capability contract (capabilities/http in
 // chain-sdk). Stateless — no data-directory involvement, unlike storage/
 // files — each call is an independent request. Async, unlike the sync
@@ -364,14 +429,41 @@ fn to_process_runner_command_error(e: chain_core::process_runner::ProcessRunnerE
 // listener yet) before that id ever reached JS. Caller-supplied ids
 // close that race entirely — see packages/sdk/src/process-runner.ts's
 // comments.
+// One argv element: a plain string, or a `desktop.files` reference that's
+// replaced by that managed file's path here, so JS never sees it — see
+// process-runner/CONTRACT.md's "File-reference arguments".
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ProcessArg {
+    Text(String),
+    File {
+        #[serde(rename = "fileReference")]
+        file_reference: String,
+    },
+}
+
 #[tauri::command]
 fn process_runner_run(
     app: tauri::AppHandle,
     state: tauri::State<ProcessRunnerState>,
+    files_state: tauri::State<FilesState>,
     id: String,
     command: String,
-    args: Vec<String>,
+    args: Vec<ProcessArg>,
+    stdin: Option<String>,
 ) -> Result<(), String> {
+    // Resolved before anything spawns: an unknown reference rejects run()
+    // with NOT_FOUND and no process is ever started.
+    let args = args
+        .into_iter()
+        .map(|arg| match arg {
+            ProcessArg::Text(text) => Ok(text),
+            ProcessArg::File { file_reference } => {
+                with_files(&app, &files_state, |files| files.process_path(&file_reference))
+            }
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+
     let processes = Arc::clone(&state.processes);
     let processes_for_exit = Arc::clone(&processes);
     let app_for_output = app.clone();
@@ -381,6 +473,7 @@ fn process_runner_run(
     let handle = chain_core::process_runner::run(
         &command,
         &args,
+        stdin,
         move |chunk| {
             let stream = match chunk.stream {
                 chain_core::process_runner::ProcessStream::Stdout => "stdout",
@@ -455,6 +548,8 @@ pub fn run() {
             files_read,
             files_resolve_path,
             files_delete,
+            files_pick,
+            files_save,
             http_get,
             agent_server_start,
             agent_server_stop,

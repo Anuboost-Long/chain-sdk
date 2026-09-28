@@ -1,0 +1,128 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Storage",
+  description: "desktop.storage: the app's own SQLite database, with migrations, queries, and writes."
+};
+
+# Storage
+
+<div className="lead">
+  Give your app its own SQLite database, stored in the user's app-data folder. You write the schema and the SQL; Chain
+  handles opening the database, tracking migrations, and binding parameters safely.
+</div>
+
+<PlatformSupport name="storage" />
+
+## Example
+
+Declare the table as a class:
+
+```ts title="src/lib/db/schema/note.ts"
+import { Column, PrimaryKey, Table } from "@chain/sdk/schema";
+
+@Table()
+export class Note {
+  @PrimaryKey({ autoIncrement: true }) id!: number;
+  title!: string;
+  @Column({ defaultSql: "datetime('now')" }) created_at!: string;
+}
+```
+
+Generate the migration from it:
+
+```bash
+chain migration add create-notes
+```
+
+Then run pending migrations on startup and query with the class as the row type:
+
+```ts title="src/lib/notes.ts"
+import { desktop } from "@chain/sdk";
+
+import { migrations } from "./db/migrations";
+import type { Note } from "./db/schema";
+
+export function initNotes() {
+  return desktop.storage.migrate(migrations); // safe on every launch
+}
+
+export async function addNote(title: string) {
+  const { lastInsertId } = await desktop.storage.execute("INSERT INTO note (title) VALUES (?1)", [title]);
+  return lastInsertId;
+}
+
+export function listNotes() {
+  return desktop.storage.query<Note>("SELECT id, title, created_at FROM note ORDER BY created_at DESC");
+}
+```
+
+When the class changes, run `chain migration add <name>` again. See [chain migration](/cli/migration/) for how
+schema classes work and how changes become SQL.
+
+## API
+
+<ContractSource name="storage" />
+
+### `migrate(migrations)`
+
+Runs every migration whose `version` hasn't been applied yet, in ascending order. Each migration's `sql` can hold
+several statements and runs as one batch.
+
+- **Migrations are generated for you** by `chain migration add` from your schema classes. You can still pass
+  hand-written ones: any `{ version, sql }` works.
+- **Versions must be unique and only ever increase.** Never edit or renumber a migration that has shipped; add a new one.
+- **It's safe to call on every launch.** Already-applied versions are skipped, so passing the same list again does
+  nothing.
+- **Chain tracks applied versions in a table named `_chain_migrations`.** Don't create a table with that name.
+
+[chain database](/cli/database/) applies or reverts them without launching the app. `name` and `down` are optional
+fields generated migrations carry: `name` goes into the history, and `down` is only used by the CLI to roll back.
+
+### `query(sql, params?)`
+
+Runs a read and resolves with one plain object per row, keyed by column name. Pass a row type to get typed results:
+`query<Note>(...)`.
+
+### `execute(sql, params?)`
+
+Runs a write (`INSERT`, `UPDATE`, `DELETE`, or a schema change) and resolves with:
+
+- `rowsAffected`: how many rows changed.
+- `lastInsertId`: the row id of the last inserted row.
+
+### Parameters
+
+Put `?1`, `?2`, … (or plain `?`) in the SQL and pass the values in `params`. Never build SQL by joining strings with
+user input: bound parameters are what keep a title like `'); DROP TABLE notes; --` just a title.
+
+## Behavior
+
+- **One database per app,** in the OS's per-user app-data folder (on macOS,
+  `~/Library/Application Support/<app identifier>/app.db`).
+- **No open step.** The database and its folder are created the first time any `desktop.storage` method runs.
+- **Each `execute` call is one statement.** There's no multi-call transaction API yet.
+
+## Errors
+
+| Code             | When                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `NATIVE_FAILURE` | Malformed SQL, a constraint violation, or any other database error. `message` has SQLite's text. |
+| `UNSUPPORTED`    | Called outside a Chain app.                                                        |
+
+```ts
+try {
+  await desktop.storage.execute("INSERT INTO notes (id, title) VALUES (?1, ?2)", [1, "Duplicate"]);
+} catch (e) {
+  // e.code === "NATIVE_FAILURE"
+  // e.message: "UNIQUE constraint failed: notes.id"
+}
+```
+
+## Not included
+
+- **No ORM or query builder.** Queries are SQL. Rows come back keyed by column name, which is why schema class
+  properties are named after their columns.
+- **No multiple databases.** One per app.
+- **No transaction wrapper yet.** It will be added when an app needs multi-statement atomicity that single statements
+  can't express.

@@ -1,0 +1,86 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Platform",
+  description: "desktop.platform: the operating system, CPU architecture, and runtime version."
+};
+
+# Platform
+
+<div className="lead">
+  Read which operating system and CPU architecture your app is running on, and the version of the runtime underneath.
+</div>
+
+<PlatformSupport name="platform" />
+
+## Example
+
+Show the environment in an About screen or attach it to a bug report:
+
+```tsx
+import { desktop, type PlatformInfo } from "@chain/sdk";
+import { useEffect, useState } from "react";
+
+export function AboutEnvironment() {
+  const [info, setInfo] = useState<PlatformInfo>();
+
+  useEffect(() => {
+    desktop.platform.getInfo().then(setInfo);
+  }, []);
+
+  if (!info) return null;
+  return (
+    <dl>
+      <dt>Operating system</dt>
+      <dd>{info.os === "macos" ? "macOS" : "Windows"}</dd>
+      <dt>Architecture</dt>
+      <dd>{info.arch}</dd>
+      <dt>Runtime</dt>
+      <dd>{info.runtimeVersion}</dd>
+    </dl>
+  );
+}
+```
+
+A resolved result looks like this:
+
+```ts
+{ os: "macos", arch: "arm64", runtimeVersion: "2.11.5" }
+```
+
+## API
+
+<ContractSource name="platform" />
+
+### `getInfo()`
+
+Resolves with a `PlatformInfo` object:
+
+| Field            | Values                   | Meaning                                                    |
+| ---------------- | ------------------------ | ---------------------------------------------------------- |
+| `os`             | `"macos"` or `"windows"` | The operating system.                                      |
+| `arch`           | `"arm64"` or `"x64"`     | The CPU architecture the app binary is running on.         |
+| `runtimeVersion` | string                   | The version of the runtime under Chain, currently Tauri's. |
+
+`os` and `arch` are closed lists. A new value, like `"linux"`, arrives as a documented API change, never silently, so a
+`switch` over them stays exhaustive.
+
+## Behavior
+
+- **It always resolves inside a Chain app.** It doesn't touch permissions, hardware, or user data, so there's nothing
+  to fail.
+- **It returns plain data.** No runtime- or OS-specific objects ever reach your app.
+- **Use it for display and diagnostics, not feature checks.** To find out whether a feature works, call that feature
+  and handle `UNSUPPORTED`. See [capability detection](/concepts/#capability-detection-not-platform-detection).
+
+## Errors
+
+| Code             | When                                                                           |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `UNSUPPORTED`    | Called outside a Chain app (a plain browser tab), or on an unsupported platform. |
+| `NATIVE_FAILURE` | The runtime reported an unexpected failure.                                    |
+
+## Not included
+
+`getInfo()` deliberately stops at OS, architecture, and runtime version. Hostname, locale, user identity, hardware
+details, and environment variables are not part of it. Each would be a separate, deliberate addition.

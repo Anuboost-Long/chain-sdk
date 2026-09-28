@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+/* Chain's logo palette: charcoal ground, pale neutral, electric lime.
+   Dark is the brand's own presentation, so it is the default; light
+   swaps lime text for a deep olive because lime can't carry text on pale. */
+:root {
+  --canvas: #171b24;
+  --raised: #1d222c;
+  --sunken: #12151c;
+  --line: #2b313d;
+  --ink: #eef2e4;
+  --ink-muted: #a4ab9b;
+  --ink-faint: #737a6c;
+  --lime: #c5f74f;
+  --on-lime: #171b24;
+  --link: #c5f74f;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --canvas: #f4f6ee;
+    --raised: #eaeee0;
+    --sunken: #e3e8d6;
+    --line: #d3d9c5;
+    --ink: #171b24;
+    --ink-muted: #4d5446;
+    --ink-faint: #6a7163;
+    --lime: #c5f74f;
+    --on-lime: #171b24;
+    --link: #3f5c00;
+    color-scheme: light;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-lime: var(--lime);
+  --color-on-lime: var(--on-lime);
+  --color-link: var(--link);
+  --font-display: var(--font-bricolage);
+  --font-sans: var(--font-onest);
+  --font-mono: var(--font-jetbrains);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Code: rehype-pretty-code (MDX) and shiki (contract sources) both emit
+   per-token --shiki-dark / --shiki-light, so one rule themes both. */
+pre {
+  overflow-x: auto;
+  padding: 1rem 1.125rem;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+pre code {
+  display: grid;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* Shiki emits blank lines as empty spans, which a grid collapses. */
+pre .line:empty::before {
+  content: " ";
+}
+
+pre span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+}
+
+@media (prefers-color-scheme: light) {
+  pre span {
+    color: var(--shiki-light);
+    font-style: var(--shiki-light-font-style);
+  }
+}
+
+figure[data-rehype-pretty-code-figure] {
+  margin: 1.25rem 0;
+}
+
+figcaption[data-rehype-pretty-code-title] {
+  padding: 0.5rem 1.125rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  color: var(--ink-muted);
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+figcaption[data-rehype-pretty-code-title] + pre {
+  border-radius: 0 0 10px 10px;
+}
+
+/* Long-form docs text. Headings use the display face at a modular
+   scale (1.25), body runs under ~72ch. */
+.prose {
+  max-width: 72ch;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.prose > * + * {
+  margin-top: 1rem;
+}
+
+.prose h1 {
+  font-family: var(--font-bricolage), sans-serif;
+  font-size: clamp(2.25rem, 4vw, 2.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.prose h2 {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-bricolage), sans-serif;
+  font-size: 1.5625rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 5rem;
+}
+
+.prose h3 {
+  margin-top: 2rem;
+  font-family: var(--font-bricolage), sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  scroll-margin-top: 5rem;
+}
+
+.prose h3 code {
+  font-size: 0.95em;
+}
+
+.prose p,
+.prose li {
+  color: var(--ink);
+}
+
+.prose .lead {
+  font-size: 1.1875rem;
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
+
+/* MDX wraps a multi-line lead's text in its own <p>, so the lead is a div. */
+.prose .lead p {
+  color: inherit;
+}
+
+.prose a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.prose a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.prose ul {
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+
+.prose ol {
+  padding-left: 1.25rem;
+  list-style: decimal;
+}
+
+.prose li + li {
+  margin-top: 0.375rem;
+}
+
+.prose li::marker {
+  color: var(--ink-faint);
+}
+
+.prose strong {
+  font-weight: 600;
+}
+
+.prose :not(pre) > code {
+  padding: 0.125rem 0.375rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 0.85em;
+}
+
+.prose table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.prose th {
+  padding: 0.5rem 1rem 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-muted);
+  font-weight: 500;
+  text-align: left;
+}
+
+.prose td {
+  padding: 0.625rem 1rem 0.625rem 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.prose blockquote {
+  padding-left: 1rem;
+  border-left: 2px solid var(--lime);
+  color: var(--ink-muted);
+}
+
+/* The home page's layer trace (components/layer-trace.tsx). */
+@keyframes joint-on {
+  from {
+    background: var(--line);
+  }
+  to {
+    background: var(--lime);
+  }
+}
+
+@keyframes layer-on {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes result-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: 0s !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -25,9 +25,10 @@ Read order for a task in this capability:
   platform, no per-OS branching (SQLite is a portable C library; what
   differs per OS is only where Tauri resolves the app-data directory to,
   which Tauri already handles).
-- Rows come back as plain JSON objects (column name → value), not typed
-  models — schema/query design is entirely the consuming app's job (see
-  CONTRACT.md's Non-goals).
+- Rows come back as plain JSON objects (column name → value). The app's
+  `@Table` schema classes (read by the CLI, not at runtime) type them
+  and generate its migrations — see CONTRACT.md and the command README's
+  migrations section.
 - Migrations are tracked in an internal `_chain_migrations` table this
   capability owns; re-running an already-applied migration is a no-op.
 
@@ -50,6 +51,24 @@ Implemented and verified for real on macOS:
 - Propagated to `mneme` via `chain update` itself (not a fresh
   `chain init`) — real-world proof the update/merge feature works for a
   newly-added capability, not just a contrived test.
+
+### Model-first migrations — 28 September 2026
+
+- `storage.rs`: history gained `name`/`checksum` (upgraded in place);
+  the runner turns `foreign_keys` off and `legacy_alter_table` on while
+  migrating and restores both; a failing migration is rolled back. Unit
+  tests: `records_name_and_checksum_and_upgrades_old_history_tables`,
+  `failed_migration_rolls_back_and_restores_foreign_keys`,
+  `rebuilds_a_table_that_another_tables_trigger_mentions`,
+  `checksum_matches_fnv1a_reference_vectors`.
+- **Real bug fixed:** mneme's hand-written migration 6 failed on any
+  fresh database under SQLite ≥ 3.26 ("error in trigger
+  agent_message_insert: no such table: main.agent_conversation"),
+  reproduced with the app's own bundled SQLite 3.46 through
+  `chain_core::storage::Database`. With `legacy_alter_table` on during
+  migrations, all 15 apply.
+- The generator itself lives in the CLI (`packages/cli/src/schema/`),
+  tested by `packages/cli/test/schema.test.mjs`.
 
 ## What's NOT done yet (next steps for an agent to pick up)
 

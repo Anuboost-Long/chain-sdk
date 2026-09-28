@@ -1,0 +1,151 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Process runner",
+  description: "desktop.processRunner: run a program and stream its stdout and stderr as it prints."
+};
+
+# Process runner
+
+<div className="lead">
+  Run a command-line program and receive its output while it's still running, not all at once when it exits. You can
+  send it input, wait for its exit code, or stop it early.
+</div>
+
+<PlatformSupport name="process-runner" />
+
+## Example
+
+A "run" button that streams a command's output into the UI line by line, with a stop button:
+
+```tsx title="src/components/CommandOutput.tsx"
+import { desktop, type ProcessHandle } from "@chain/sdk";
+import { useRef, useState } from "react";
+
+export function CommandOutput() {
+  const [lines, setLines] = useState<string[]>([]);
+  const [exitCode, setExitCode] = useState<number | null>();
+  const handle = useRef<ProcessHandle>(undefined);
+
+  async function run() {
+    setLines([]);
+    setExitCode(undefined);
+    let pending = "";
+
+    const args = ["log", "--oneline", "-n", "50"];
+    handle.current = await desktop.processRunner.run("git", args, (chunk) => {
+      // Chunks can split or join lines, so buffer and split on newlines.
+      pending += chunk.data;
+      const complete = pending.split("\n");
+      pending = complete.pop() ?? "";
+      setLines((previous) => [...previous, ...complete]);
+    });
+
+    const exit = await handle.current.exited;
+    if (pending) setLines((previous) => [...previous, pending]);
+    setExitCode(exit.killed ? null : exit.code);
+  }
+
+  return (
+    <section>
+      <button onClick={run}>Run</button>
+      <button onClick={() => handle.current?.kill()}>Stop</button>
+      <pre>{lines.join("\n")}</pre>
+      {exitCode !== undefined && <p>{exitCode === null ? "Stopped" : `Exited with code ${exitCode}`}</p>}
+    </section>
+  );
+}
+```
+
+### Sending input
+
+For input too large to pass as arguments, such as a whole document for an AI CLI to work on, use `stdin`. It's written
+once, then closed so the program sees the end of its input:
+
+```ts
+const handle = await desktop.processRunner.run("claude", ["-p", "Summarize this course"], onOutput, {
+  stdin: courseText
+});
+```
+
+### Passing a stored file
+
+Some programs only take a file path, like `codex exec -i <image>`. Pass a [Files](/capabilities/files/) reference
+as `{ fileReference }` and Chain substitutes that file's real path natively, as one argument. Your app still never
+sees the path:
+
+```ts
+const image = await desktop.files.write(pngBytes, { extension: "png" });
+const handle = await desktop.processRunner.run("codex", ["exec", "-i", { fileReference: image }, prompt], onOutput);
+
+await handle.exited;
+await desktop.files.delete(image); // your app owns the file's lifetime
+```
+
+## API
+
+<ContractSource name="process-runner" />
+
+### `run(command, args, onOutput, options?)`
+
+Starts `command` with `args` and resolves with a handle **as soon as the process has started**, not when it finishes.
+
+- `command` is looked up on `PATH`, like a terminal would. On macOS this is your login shell's `PATH`, so tools
+  installed with Homebrew or nvm are found even when the app is opened from Finder.
+- `args` is passed to the OS exactly as given. Each element arrives as one argument, whatever characters it contains.
+  There's no shell, so nothing is split, expanded, or interpreted.
+- An `args` element can be `{ fileReference }`: it becomes exactly one argument, the stored file's path. An unknown
+  reference rejects with `NOT_FOUND` before anything starts.
+- `onOutput` is called with `{ stream, data }` every time the process writes to stdout or stderr.
+- `options.stdin` is written to the process's input and then closed. Leave it out and the process gets no input at all.
+
+### `handle.exited`
+
+Resolves once the process ends, however it ends, with `{ code, killed }`. It never rejects.
+
+- `code` is the exit code, or `null` if the process was killed or stopped by a signal.
+- `killed` is `true` if `kill()` ended it.
+
+### `handle.kill()`
+
+Stops the process. It's safe to call after the process has already exited.
+
+## Behavior
+
+- **Chunks aren't lines.** A chunk is whatever one read returned: half a line, or several. Buffer and split on `\n`
+  yourself if you need lines, as in the example.
+- **stdout and stderr are each in order, but not relative to each other.** A stderr chunk can arrive before a stdout
+  chunk the program printed slightly earlier.
+- **Output is text.** Both streams are decoded as UTF-8; invalid bytes become `�`. Binary output isn't supported.
+- **A non-zero exit isn't an error.** `exited` resolves with the real code, and your app decides what it means.
+- **Large input is safe.** `stdin` is written while output is being read, so multi-megabyte input can't deadlock. If
+  the program exits without reading it all, that's not an error either.
+
+## Errors
+
+`run()` rejects only when the process couldn't start:
+
+| Code                | When                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| `INVALID_ARGUMENT`  | `command` is empty.                                          |
+| `NOT_FOUND`         | No program by that name was found on `PATH`, or a `fileReference` doesn't match a stored file. |
+| `PERMISSION_DENIED` | The file exists but the OS won't run it.                     |
+| `NATIVE_FAILURE`    | Any other failure to start. `message` has the details.       |
+| `UNSUPPORTED`       | Called outside a Chain app.                                  |
+
+```ts
+try {
+  await desktop.processRunner.run("not-a-real-command", [], () => {});
+} catch (e) {
+  // e.code === "NOT_FOUND"
+}
+```
+
+## Not included
+
+- **No shell, ever.** Pipes, globbing, `&&`, and variable expansion don't exist here. Run the program you want directly.
+- **No allowlist or permission prompts.** Your app decides which commands are acceptable to run.
+- **No interactive processes.** Input is a single `stdin` payload; there's no way to write more later, and no terminal
+  emulation.
+- **No custom working directory or environment variables yet.** The process inherits the app's own.
+- **`kill()` stops the process itself,** not necessarily the programs it started.

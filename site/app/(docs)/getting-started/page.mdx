@@ -1,0 +1,137 @@
+export const metadata = {
+  title: "Getting started",
+  description: "Install the Chain CLI, create an app, run it, and make your first SDK call."
+};
+
+# Getting started
+
+<div className="lead">
+  Create a desktop app, run it in a native window, and call your first Chain API. It takes about five minutes, most
+  of it waiting for the first Rust build.
+</div>
+
+## Before you start
+
+You need:
+
+- **Node.js 22.18 or newer.**
+- **macOS.** Every capability runs on macOS today. Windows support is being built next; see each capability's page for
+  where it stands.
+- **Rust.** Chain compiles a small native binary for your app, so Rust is needed on the machine that builds it. Your
+  users never need it. `chain doctor` checks for it and can install it for you.
+
+## Install the CLI
+
+The `chain` command is installed from a clone of the repository for now:
+
+```bash
+git clone https://github.com/Anuboost-Long/chain-sdk.git
+cd chain-sdk/packages/cli
+npm link
+```
+
+Check that it worked:
+
+```bash
+chain --version
+```
+
+## Check your toolchain
+
+```bash
+chain doctor
+```
+
+`doctor` looks for the Rust toolchain. If it's missing, it offers to install it with rustup and asks before doing
+anything. See [chain doctor](/cli/doctor/) for details.
+
+## Create an app
+
+Run this from the folder that should contain your new app:
+
+```bash
+chain init my-app
+```
+
+You get a React and TypeScript app with Tailwind CSS, page routing, and `@chain/sdk` already installed. The native
+project lives out of sight in `.chain/native/`, so the folders you work in are ordinary frontend ones:
+
+```text
+my-app/
+├── src/
+│   ├── App.tsx
+│   ├── router.tsx
+│   ├── layouts/RootLayout.tsx
+│   ├── components/NavBar.tsx
+│   └── pages/
+│       ├── Home.tsx
+│       └── About.tsx
+├── asset/            placeholder app icon, replace with your own
+├── .chain/           the native project and update baseline, commit it
+└── package.json
+```
+
+`init` only creates new folders. It stops with an error if `my-app` already exists. To bring an existing app up to
+date with the framework, use [chain update](/cli/update/).
+
+## Run it
+
+```bash
+cd my-app
+npm run dev
+```
+
+`npm run dev` runs [chain dev](/cli/dev/). The first run compiles the native side, which takes a few minutes; after
+that, starts are quick. A window opens with your app, and saving a file under `src/` reloads it.
+
+## Make your first call
+
+Every native feature is reached through one import, `desktop`. Here is a component that shows which OS the app is
+running on:
+
+```tsx title="src/pages/Home.tsx"
+import { desktop, type ChainError, type PlatformInfo } from "@chain/sdk";
+import { useEffect, useState } from "react";
+
+export default function Home() {
+  const [info, setInfo] = useState<PlatformInfo>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    desktop.platform
+      .getInfo()
+      .then(setInfo)
+      .catch((e: ChainError) => setError(`${e.code}: ${e.message}`));
+  }, []);
+
+  if (error) return <p>Couldn't read platform info. {error}</p>;
+  if (!info) return <p>Loading…</p>;
+  return (
+    <p>
+      Running on {info.os} ({info.arch}), runtime {info.runtimeVersion}
+    </p>
+  );
+}
+```
+
+Two things to notice:
+
+- Your app never imports Tauri, Rust bindings, or OS APIs. Everything goes through `@chain/sdk`, which is what lets
+  Chain swap what's underneath without breaking your code.
+- Failures always arrive as a `ChainError` with a small, fixed set of `code` values, whatever the OS reported. See
+  [Core concepts](/concepts/#errors).
+
+## Build a release
+
+```bash
+npm run build
+```
+
+This runs [chain build](/cli/build/) and produces a release binary and installer for the OS you're on, in
+`.chain/native/target/release/bundle/`.
+
+## Where to go next
+
+- [How Chain works](/architecture/) walks one call through every layer.
+- [Capabilities](/capabilities/) lists everything your app can do today, with an example for each.
+- [chain inspect](/cli/inspect/) lets you script and screenshot your running app from the terminal.

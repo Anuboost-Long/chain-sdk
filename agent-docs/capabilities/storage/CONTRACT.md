@@ -16,6 +16,8 @@ migrate(migrations: Migration[]): Promise<void>
 interface Migration {
   version: number;  // must be unique and increasing across the app's lifetime
   sql: string;       // one or more statements, run as a single batch
+  name?: string;     // recorded in the history; generated migrations always have one
+  down?: string;     // reverts `sql`; ignored here — only the CLI migrates down
 }
 ```
 
@@ -29,6 +31,23 @@ applied — safe to call on every app startup.
 The database is created, and the data directory created if missing, the
 first time any `desktop.storage.*` call is made — no separate "open"
 step in the public API.
+
+`_chain_migrations` records each migration's `version`, `applied_at`,
+`name`, and `checksum` (FNV-1a 64 of `sql`, hex), so the CLI can show the
+history and flag a migration edited after it ran. Older history tables
+gain the two columns in place.
+
+While migrating, foreign-key enforcement is off and
+`legacy_alter_table` is on — both needed by SQLite's table-rebuild
+procedure — and both are restored afterwards. A migration that fails
+part-way is rolled back; ones before it stay applied, and `migrate()`
+rejects with the failure.
+
+Migrations are normally **generated**, not written by hand: the app
+declares its schema as `@Table` classes (`@chain/sdk/schema`) and
+`chain migration add <name>` diffs them into a migration with both `sql`
+and `down` — see `agent-docs/framework/command/README.md`. That's CLI
+tooling around this API; `migrate()` itself runs whatever it's given.
 
 ## `desktop.storage.query(sql, params?)`
 
@@ -64,8 +83,15 @@ other capability.
 
 ## Non-goals
 
-- No ORM, no generated typed models, no query builder. `query`/`execute`
-  take raw SQL — the app owns its schema and query logic.
+- No ORM and no query builder: `query`/`execute` take raw SQL. The
+  schema, though, is declared as `@Table` classes that migrations are
+  generated from, and those classes are the row types
+  (`query<Course>(…)`) — the user asked for `dotnet ef`-style
+  model-first migrations explicitly (28 September 2026), which replaced
+  the earlier "no generated models" rule. Query mapping stays out: rows
+  come back keyed by column name, so property names are column names.
+- The app never migrates **down**; `down` is only run by
+  `chain database update <earlier version>`.
 - No multi-database support in this version — one database per app.
 - No app-level table design (Courses, Modules, ...) — that's the
   consuming app's responsibility, built on top of `migrate`/`query`/

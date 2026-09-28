@@ -89,4 +89,13 @@ deliberately generic — no AI-CLI/output-format awareness, and no
 compiled-in executable allowlist (that's Phase 28's job) — see that
 capability's `CONTRACT.md` for why.
 
+`files.pick()` (mneme request 16 — the OS open panel attached to the
+app window as a sheet, returning names and bytes, never paths),
+`files.save()` (request 17 — the save panel as a sheet on every call,
+native writes the bytes, returns only the file name), and
+`processRunner.run()`'s `{ fileReference }` arguments (request 14 — a
+managed file's path substituted natively as one argv element) are both
+verified end to end on macOS in a real `chain dev` app; Windows is
+unverified for all three (see each capability's `research/WINDOWS.md`).
+
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.

@@ -9,6 +9,13 @@ export interface ProcessOutputChunk {
   data: string;
 }
 
+/**
+ * One argv element. A `{ fileReference }` is a `desktop.files` reference;
+ * native replaces it with that managed file's absolute path as exactly one
+ * argument — JS never sees the path (see CONTRACT.md).
+ */
+export type ProcessArg = string | { fileReference: string };
+
 export type ProcessOutputHandler = (chunk: ProcessOutputChunk) => void;
 
 export interface ProcessExit {
@@ -25,6 +32,16 @@ export interface ProcessHandle {
   readonly exited: Promise<ProcessExit>;
 }
 
+export interface ProcessRunOptions {
+  /** Written to the process's stdin as UTF-8, then stdin is closed (EOF). Omitted: the process gets no stdin at all (see CONTRACT.md). */
+  stdin?: string;
+}
+
 export interface ProcessRunnerApi {
-  run(command: string, args: string[], onOutput: ProcessOutputHandler): Promise<ProcessHandle>;
+  run(
+    command: string,
+    args: ProcessArg[],
+    onOutput: ProcessOutputHandler,
+    options?: ProcessRunOptions
+  ): Promise<ProcessHandle>;
 }

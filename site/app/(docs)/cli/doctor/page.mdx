@@ -1,0 +1,50 @@
+export const metadata = {
+  title: "chain doctor",
+  description: "Check for, and optionally install, the Rust toolchain a Chain app needs to build."
+};
+
+# chain doctor
+
+<div className="lead">Check that this machine can build Chain apps, and install what's missing if you agree.</div>
+
+```bash
+chain doctor
+```
+
+Run it from anywhere.
+
+## Example
+
+On a machine without Rust:
+
+```text
+$ chain doctor
+Checking Chain development prerequisites...
+
+  ✘ Rust toolchain (cargo) — required to build the native (Tauri) side of a Chain app
+
+Install the Rust toolchain now via the official rustup.rs installer? [y/N] y
+
+Installing Rust via rustup...
+
+Rust installed. Open a new shell (or run `source "$HOME/.cargo/env"`) so `cargo` is on PATH.
+```
+
+On a machine that's ready:
+
+```text
+$ chain doctor
+Checking Chain development prerequisites...
+
+  ✔ Rust toolchain (cargo)
+
+All set.
+```
+
+## Behavior
+
+- **It never installs without asking.** The install only runs after you answer `y`, using the official rustup script.
+- **It never prompts in scripts or CI.** When there's no interactive terminal, it reports what's missing and exits
+  without installing anything.
+- **Rust is only needed where apps are built.** It's compiled into the app's binary, so the people who use your app
+  never need it.

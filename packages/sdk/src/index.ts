@@ -21,7 +21,7 @@ export const desktop = {
 export type { ChainError, ChainErrorCode } from "./errors";
 export type { PlatformInfo, ChainOs, ChainArch } from "./contracts/platform";
 export type { StorageApi, Migration, ExecuteResult } from "./contracts/storage";
-export type { FilesApi } from "./contracts/files";
+export type { FilesApi, PickOptions, PickedFile, SaveOptions, SavedFile } from "./contracts/files";
 export type { HttpApi, HttpResponse } from "./contracts/http";
 export type {
   AgentServerApi,
@@ -32,8 +32,10 @@ export type {
 } from "./contracts/agent-server";
 export type {
   ProcessRunnerApi,
+  ProcessArg,
   ProcessHandle,
   ProcessOutputChunk,
   ProcessOutputHandler,
+  ProcessRunOptions,
   ProcessExit
 } from "./contracts/process-runner";

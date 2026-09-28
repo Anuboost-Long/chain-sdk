@@ -38,6 +38,7 @@ feature added to this SDK.
 | Chain CLI            | [`framework/command/`](framework/command/README.md)         | `chain init`/`dev`/`build`/`update`/`doctor`, `--help`, `--version` |
 | Chain SDK            | [`framework/sdk/`](framework/sdk/README.md)                 | `@chain/sdk` — the public TS API apps import             |
 | Visual identity      | [`framework/brand/`](framework/brand/README.md)             | Chain logo assets and usage                               |
+| Documentation site   | [`framework/site/`](framework/site/README.md)               | `site/` — the public Next.js docs site for app developers |
 | Chain Core           | [`framework/core/`](framework/core/README.md)               | `crates/core` — the Rust coordination crate               |
 | Platform capability  | [`capabilities/platform/`](capabilities/platform/README.md) | `desktop.platform.getInfo()` end-to-end slice              |
 | Storage capability   | [`capabilities/storage/`](capabilities/storage/README.md)   | `desktop.storage` — SQLite-backed migrate/query/execute    |

@@ -1,0 +1,44 @@
+export const metadata = {
+  title: "chain clean",
+  description: "Free the disk space Chain's native build caches use."
+};
+
+# chain clean
+
+<div className="lead">
+  Free the disk space used by native build caches. Rust never deletes old build output by itself, so caches only grow
+  until you clean them.
+</div>
+
+```bash
+chain clean         # this app: release builds, and its own code in the shared cache
+chain clean --all   # the whole shared dev cache, for every Chain app
+```
+
+## Example
+
+```text
+$ chain clean
+Removed this app's release builds (1.1 GB) at /Users/you/Projects/notes-app/.chain/native/target.
+Removed this app's own crate from the shared dev cache at /Users/you/Library/Caches/chain/target.
+Run `chain clean --all` to clear the shared dependencies too.
+
+$ chain clean --all
+Removed the shared dev build cache (4.2 GB) at /Users/you/Library/Caches/chain/target.
+Every Chain app's next `chain dev` recompiles its dependencies once.
+```
+
+## What each one removes
+
+| Command             | Removes                                                                                  | Next build            |
+| ------------------- | ---------------------------------------------------------------------------------------- | --------------------- |
+| `chain clean`       | This app's release builds, and this app's own code in the shared dev cache.              | Rebuilds your app's code only. |
+| `chain clean --all` | The entire shared dev cache in `~/Library/Caches/chain/target`, used by all your Chain apps. | Recompiles Tauri and every dependency once, a few minutes. |
+
+## Behavior
+
+- **Only build output is removed.** Your source, `.chain/native` config, and app data are never touched.
+- **Nothing is deleted unless you run it.** `chain dev` and `chain build` only print a one-line reminder when a cache
+  passes 8 GB.
+- **`chain clean` runs inside an app; `--all` runs anywhere.**
+- **It respects `CARGO_TARGET_DIR`.** If you set your own cache location, that's the one it cleans.

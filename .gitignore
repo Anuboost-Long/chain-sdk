@@ -8,3 +8,4 @@ Cargo.lock
 packages/sdk/src/contracts/
 packages/cli/asset/
 packages/cli/src/publishMeta.ts
+.lazify/

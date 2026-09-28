@@ -125,6 +125,54 @@ Implemented and verified for real on macOS:
   Cargo.toml feature change — a running `cargo` process won't recompile
   that on its own file-watcher.
 
+### `pick()` (mneme request 16) — verified on macOS, 28 September 2026
+
+- `chain_core::files::pick` (`rfd` 0.17 `AsyncFileDialog` + `set_parent`)
+  wired as the async `files_pick` command in `templates/lib.rs` and
+  `apps/playground`, returning a raw binary response (u32 header length,
+  JSON `[{name,size}]` header, bytes) that `packages/sdk/src/files.ts`
+  decodes. Separate `PickError` enum, deliberately **not** new
+  `FilesError` variants: existing apps' `lib.rs` match on `FilesError`
+  exhaustively and would fail to compile before their `chain update`.
+- Verified in a throwaway `chain init` app running under `chain dev`
+  (driven with `chain inspect --eval`; the user operated the picker by
+  hand, since this session had no Accessibility/Screen Recording
+  permission): the panel appeared **attached to the app window** (user
+  confirmed, and it moved with the window); a real `.md` pick returned
+  the right name, `size: 14724`, and the file's actual text; cancel
+  resolved `[]`; `extensions: [".png"]` rejected `INVALID_ARGUMENT`; a
+  second `pick()` while one was open rejected `UNAVAILABLE`; the app kept
+  answering inspector calls while the sheet was open (main thread not
+  blocked). A debug copy of rfd logged the sheet completion code `1`
+  (`NSModalResponseOK`) for the real pick.
+- Observed once, not investigated: re-activating the dev app with
+  `open -a <binary>` while the sheet was open dismissed it (resolved
+  `[]`). Normal ⌘-Tab activation did not. Worth checking whether a Dock
+  click does the same.
+
+### `save()` (mneme request 17) — verified on macOS, 28 September 2026
+
+- `chain_core::files::save` — `rfd` `AsyncFileDialog::save_file` with
+  `set_parent`; confirmed in rfd 0.17.2's source that it goes through the
+  same `ModalFuture` → `beginSheetModalForWindow` path as `pick()`.
+  Shares `pick()`'s one-panel guard and `PickError`. Writes with
+  `std::fs::write`; `with_allowed_extension` (unit-tested) appends the
+  first allowed extension when the chosen name has none of them.
+  `suggestedName` is reduced to its last path component. Every call
+  shows the panel (the user's explicit requirement) — nothing is
+  remembered by this capability.
+- `files_save` in `templates/lib.rs`/playground takes the bytes as a JSON
+  number array, same as `files_write` (fine for backup-sized payloads;
+  switch to a raw `tauri::ipc::Request` body if an app saves large files).
+- Verified in a throwaway `chain dev` app, the user operating the panel:
+  attached to the window; a save wrote exactly the 27 bytes sent to the
+  chosen folder and returned `{ name: "mneme-backup-2026-09-28.json" }`
+  (".json" appended to the suggested name, `nested/../` stripped);
+  cancel returned `null` and wrote nothing; `extensions: [".json"]` →
+  `INVALID_ARGUMENT`; `pick()` while the save panel was open →
+  `UNAVAILABLE`. Test files were deleted afterwards.
+- Not built: request 17's optional "reveal in Finder".
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Verify on Windows — do NOT mark the contract/component status
@@ -144,6 +192,11 @@ Implemented and verified for real on macOS:
       surfaced the asset-protocol bug) actually loads now, after mneme's
       dev server is restarted to pick up the new Cargo feature — not yet
       confirmed there specifically, only in `apps/playground`.
+
+- [ ] Verify `pick()` on Windows (`research/WINDOWS.md` checklist):
+      owned dialog, filters, cancel, multi-select.
+- [ ] Check whether a Dock-icon click (app "reopen") while the `pick()`
+      sheet is open dismisses it, as `open -a` did once.
 
 ## Rules specific to this capability
 

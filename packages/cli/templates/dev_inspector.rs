@@ -81,17 +81,16 @@ fn generate_token() -> String {
     token
 }
 
-/// `target/` sits next to whichever binary is currently running (walking
-/// up from `target/debug/<bin>`), so the info file always lands inside the
-/// native project's own already-gitignored `target/` regardless of the
-/// process's working directory.
+/// The native project's own already-gitignored `target/`, compiled in —
+/// not next to the running binary, because `chain dev` builds into a
+/// target dir shared by every Chain app (see nativeProject.ts's
+/// `sharedDevTargetDir`), where apps running at once would collide. The
+/// absolute path is baked in only for dev builds; release never has it.
 #[cfg(feature = "chain-dev-inspector")]
 fn info_file_path() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("chain-inspector.json")
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("chain-inspector.json")
 }
 
 #[cfg(feature = "chain-dev-inspector")]

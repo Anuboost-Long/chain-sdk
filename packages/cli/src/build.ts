@@ -1,8 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
-import { checkChainApp, resolveTauriBin, tauriEnv } from "./nativeProject.js";
-import { ansi, freshState, makeColor, processLine } from "./nativeOutput.js";
+import { largeCacheHint } from "./clean.js";
+import { checkChainApp, nativeProjectDir, resolveTauriBin, tauriEnv } from "./nativeProject.js";
+import { ansi, freshState, makeColor, printFailureSummary, processLine } from "./nativeOutput.js";
 
 export async function build(args: string[]): Promise<void> {
   const cwd = process.cwd();
@@ -58,5 +60,12 @@ export async function build(args: string[]): Promise<void> {
   process.on("SIGTERM", () => killTree("SIGTERM"));
 
   const code: number = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
+  if (code === 0) {
+    console.log(`\n${color(ansi.green, "● Build finished")}`);
+    const cacheHint = largeCacheHint(path.join(nativeProjectDir(cwd), "target"), "chain clean");
+    if (cacheHint) console.log(color(ansi.gray, cacheHint));
+  } else {
+    printFailureSummary("Build", code, state, color);
+  }
   process.exit(code);
 }

@@ -7,7 +7,7 @@
     "structural": "contract.ts"
   },
   "platforms": {
-    "macos": "not-started",
+    "macos": "experimental",
     "windows": "not-started",
     "linux": "not-planned"
   },

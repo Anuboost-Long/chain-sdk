@@ -22,6 +22,12 @@ reqwest = "0.12"
 # TcpListener approach (dev_inspector.rs) rather than pulling an async
 # runtime into crates/core. See agent-docs/capabilities/agent-server/research/MACOS.md.
 tiny_http = "0.12"
+# files::pick — the OS open panel attached to the app window (a sheet on
+# macOS via beginSheetModalForWindow, not wry's app-modal runModal). The
+# parent comes in through raw-window-handle's traits, so this crate never
+# depends on Tauri. See agent-docs/capabilities/files/research/MACOS.md.
+rfd = "0.17"
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

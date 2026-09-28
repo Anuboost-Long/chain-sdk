@@ -111,6 +111,15 @@ const DEV_INSPECTOR_FEATURE =
   '# never does, so a release binary contains none of dev_inspector.rs.\n' +
   'chain-dev-inspector = []';
 
+const DEV_PROFILE =
+  '# Full debug info for Tauri\'s ~400 dependencies roughly doubles target/.\n' +
+  '# Your own code keeps file:line in backtraces.\n' +
+  '[profile.dev]\n' +
+  'debug = "line-tables-only"\n' +
+  '\n' +
+  '[profile.dev.package."*"]\n' +
+  'debug = false';
+
 export function patchCargoToml(raw: string): string {
   // A pinned git dependency, not a local path: chain-core lives in the
   // chain-sdk repo, not next to a scaffolded app, so the build has to work
@@ -123,6 +132,16 @@ export function patchCargoToml(raw: string): string {
     : raw.replace('serde_json = "1"', `serde_json = "1"\n${depLine}`);
   if (!/^\[features\]/m.test(out)) {
     out = out.replace(depLine, `${depLine}\n\n${DEV_INSPECTOR_FEATURE}`);
+  }
+  // create-tauri-app's staticlib/cdylib only exist for iOS/Android builds;
+  // desktop links the rlib, and the two extra link outputs cost ~300 MB
+  // of target/ and link time on every dev rebuild.
+  out = out.replace(
+    /^crate-type = \["staticlib", "cdylib", "rlib"\]$/m,
+    'crate-type = ["rlib"]'
+  );
+  if (!/^\[profile\.dev\]/m.test(out)) {
+    out = `${out.trimEnd()}\n\n${DEV_PROFILE}\n`;
   }
   // "protocol-asset" isn't one of Tauri's default Cargo features — without
   // it, the "asset:" URI scheme handler is compiled out entirely (not a
