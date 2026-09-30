@@ -26,9 +26,24 @@ export const desktop = {
   tts
 };
 
+export { sql } from "./storage-table";
+
 export type { ChainError, ChainErrorCode } from "./errors";
 export type { PlatformInfo, ChainOs, ChainArch } from "./contracts/platform";
-export type { StorageApi, Migration, ExecuteResult } from "./contracts/storage";
+export type {
+  StorageApi,
+  StorageScope,
+  StorageTable,
+  TableQuery,
+  Migration,
+  ExecuteResult,
+  SqlFragment,
+  Column,
+  Filter,
+  Values,
+  OrderBy,
+  Target
+} from "./contracts/storage";
 export type { FilesApi, PickOptions, PickedFile, SaveOptions, SavedFile } from "./contracts/files";
 export type {
   HttpApi,

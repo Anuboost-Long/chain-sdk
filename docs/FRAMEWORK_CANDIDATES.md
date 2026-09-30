@@ -32,7 +32,8 @@ Possible package:
 Used by:
 
 - Mneme (real consumer — requested it; see
-  `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo)
+  `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo, and
+  `26-typed-queries.md` for `table()`/`transaction()`)
 
 Generalizable:
 Yes — SQLite-backed local storage is a near-universal desktop-app need,

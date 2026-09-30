@@ -1,7 +1,7 @@
 # Storage Capability — Agent Memory
 
-Scope: `desktop.storage.migrate/query/execute` — persistent SQLite-backed
-local storage. Requested by mneme (see
+Scope: `desktop.storage.migrate/query/execute/table/transaction` —
+persistent SQLite-backed local storage. Requested by mneme (see
 `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo) as the
 first real gap beyond `platform`: mneme's Course/Module/Page/Attachment
 schema needs somewhere to live, and mneme's own rule is to never touch a
@@ -70,6 +70,41 @@ Implemented and verified for real on macOS:
 - The generator itself lives in the CLI (`packages/cli/src/schema/`),
   tested by `packages/cli/test/schema.test.mjs`.
 
+### Typed queries and transactions — 1 October 2026
+
+mneme's request 26 (`docs/chain-sdk-requests/26-typed-queries.md` in the
+mneme repo): 121 raw call sites with unchecked column strings,
+hand-built partial UPDATEs, insert-then-reread, and non-atomic delete
+cascades.
+
+- `table<T>(name)` + `sql` tag: `packages/sdk/src/storage-table.ts`.
+  Takes the `@Table` class as a type only — verified that mneme's Vite
+  8 (oxc) build leaves TC39 decorators untransformed (a syntax error in
+  the output) and minifies the class name, so a value import of a schema
+  class can't work. Hence the explicit table name, and no runtime
+  `@Column({ name })`/`@NotMapped()` awareness (see CONTRACT.md
+  non-goals).
+- `transaction()`: Rust `Database::begin/commit/rollback/
+  rollback_abandoned`, a transaction id on `query`/`execute`; unit test
+  `transaction_commits_or_rolls_back_and_refuses_outside_calls`, plus
+  `insert_returning_reads_the_row_back_through_query` for `RETURNING *`.
+- Builder SQL was run against real SQLite (`node:sqlite`) and the SDK
+  queue/transaction logic against a fake `invoke` with the same
+  begin/commit/refuse semantics: commit, rollback-and-rethrow, a plain
+  call queued behind a transaction, and the 10 s `UNAVAILABLE` on a
+  `desktop.storage` call inside the callback. Compile-time checks
+  (unknown column, wrong value type, method as column, plain template
+  string as a fragment) confirmed with `@ts-expect-error`.
+- Propagated to mneme with `chain update` (only `.chain/native/src/lib.rs`
+  changed), then verified in mneme's running `chain dev` window through
+  `chain inspect --eval`, no probe edits to mneme's source: on a `TEMP`
+  table, `insert` with a `sql` subquery value returned the stored row
+  (defaults included), `update` by id with a `sql` value, `where` with
+  `IN` + `orderBy desc`, `find`, a throwing transaction rolled back, a
+  committing one returned its value, a plain read queued behind an open
+  transaction ran after it, and an empty `delete` target was refused
+  `INVALID_ARGUMENT`.
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Verify on Windows — do NOT mark the contract/component status
@@ -85,8 +120,10 @@ Implemented and verified for real on macOS:
       — not set yet; relevant to the Windows antivirus-locking risk in
       `research/WINDOWS.md` and generally good practice for concurrent
       access.
-- [ ] No transaction API yet (CONTRACT.md non-goal) — add one only when
-      mneme has a real multi-statement-atomicity need, not speculatively.
+- [ ] If an app needs `@Column({ name })` or `@NotMapped()` with
+      `table()`, have the CLI generate a table descriptor (name, key,
+      column map) from the classes it already reads, rather than making
+      the decorators run.
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and
       `component.json`'s `platforms.windows` once Windows is verified.
 
@@ -95,6 +132,8 @@ Implemented and verified for real on macOS:
 - Don't add app-level schema (Courses, Modules, ...) here — that's
   mneme's job, built on top of `migrate`/`query`/`execute`. This
   capability only knows how to run SQL, not what the SQL means.
-- Don't add blob column support, multi-database support, or a
-  transaction API speculatively — each is a deliberate non-goal until a
+- Don't grow `table()` into a full ORM (joins, relations, change
+  tracking) speculatively; those queries stay raw SQL until an app's
+  real need says otherwise.
+- Don't add blob column support or multi-database support speculatively — each is a deliberate non-goal until a
   real app hits the need (see CONTRACT.md).

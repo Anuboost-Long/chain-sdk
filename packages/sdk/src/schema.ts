@@ -10,7 +10,9 @@
  * is a column unless marked `@NotMapped()`. Decorator arguments must
  * therefore be literals the CLI can read without running the code.
  *
- * The classes double as row types: `desktop.storage.query<Course>(...)`.
+ * The classes double as row types: `desktop.storage.query<Course>(...)`,
+ * `desktop.storage.table<Course>("course")`. Import them with `import type`:
+ * bundlers leave these decorators uncompiled for the webview.
  */
 
 type FieldDecorator = (value: undefined, context: ClassFieldDecoratorContext) => void;

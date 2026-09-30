@@ -41,7 +41,7 @@ feature added to this SDK.
 | Documentation site       | [`framework/site/`](framework/site/README.md)                           | `site/` — the public Next.js docs site for app developers                                                |
 | Chain Core               | [`framework/core/`](framework/core/README.md)                           | `crates/core` — the Rust coordination crate                                                              |
 | Platform capability      | [`capabilities/platform/`](capabilities/platform/README.md)             | `desktop.platform.getInfo()` end-to-end slice                                                            |
-| Storage capability       | [`capabilities/storage/`](capabilities/storage/README.md)               | `desktop.storage` — SQLite-backed migrate/query/execute                                                  |
+| Storage capability       | [`capabilities/storage/`](capabilities/storage/README.md)               | `desktop.storage` — SQLite: migrations, typed table(), transactions                                      |
 | Files capability         | [`capabilities/files/`](capabilities/files/README.md)                   | `desktop.files` — managed local blob storage (write/read/url/delete)                                     |
 | Http capability          | [`capabilities/http/`](capabilities/http/README.md)                     | `desktop.http` — native-side HTTP requests, axios-style (method, headers, params, body)                  |
 | AgentServer capability   | [`capabilities/agent-server/`](capabilities/agent-server/README.md)     | `desktop.agentServer` — a local 127.0.0.1-only HTTP listener so external AI agents can call into the app |

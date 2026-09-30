@@ -33,7 +33,8 @@ verified running in both `apps/playground` and `mneme`'s own window —
 still marked Experimental, not Tested, until contract tests exist and
 it's verified on Windows too (`agent-docs/capabilities/platform/AGENTS.md`).
 
-`storage` (SQLite-backed `migrate`/`query`/`execute`) is implemented and
+`storage` (SQLite-backed `migrate`/`query`/`execute`, the typed
+`table()` builder, and `transaction()`) is implemented and
 verified end to end on macOS — real inserts/queries through the full
 React → SDK → Tauri → Rust → SQLite path in `mneme`'s running window,
 including persistence across app restarts — but not yet verified on

@@ -49,24 +49,57 @@ fn storage_migrate(
     with_storage(&app, &state, |db| db.migrate(&migrations))
 }
 
+// `transaction` is the id from storage_begin, for a call made inside
+// `desktop.storage.transaction()`; absent otherwise.
 #[tauri::command]
 fn storage_query(
     app: tauri::AppHandle,
     state: tauri::State<StorageState>,
+    transaction: Option<u64>,
     sql: String,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    with_storage(&app, &state, |db| db.query(&sql, &params))
+    with_storage(&app, &state, |db| db.query(transaction, &sql, &params))
 }
 
 #[tauri::command]
 fn storage_execute(
     app: tauri::AppHandle,
     state: tauri::State<StorageState>,
+    transaction: Option<u64>,
     sql: String,
     params: Vec<serde_json::Value>,
 ) -> Result<chain_core::storage::ExecuteResult, String> {
-    with_storage(&app, &state, |db| db.execute(&sql, &params))
+    with_storage(&app, &state, |db| db.execute(transaction, &sql, &params))
+}
+
+#[tauri::command]
+fn storage_begin(app: tauri::AppHandle, state: tauri::State<StorageState>) -> Result<u64, String> {
+    with_storage(&app, &state, |db| db.begin())
+}
+
+#[tauri::command]
+fn storage_commit(app: tauri::AppHandle, state: tauri::State<StorageState>, transaction: u64) -> Result<(), String> {
+    with_storage(&app, &state, |db| db.commit(transaction))
+}
+
+#[tauri::command]
+fn storage_rollback(app: tauri::AppHandle, state: tauri::State<StorageState>, transaction: u64) -> Result<(), String> {
+    with_storage(&app, &state, |db| db.rollback(transaction))
+}
+
+// A page that reloads mid-transaction can never commit or roll it back.
+fn rollback_abandoned_transaction(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
+    if payload.event() != tauri::webview::PageLoadEvent::Started {
+        return;
+    }
+    let state = webview.state::<StorageState>();
+    let guard = state.0.lock().expect("storage mutex poisoned");
+    if let Some(db) = guard.as_ref() {
+        if let Err(e) = db.rollback_abandoned() {
+            eprintln!("[chain] couldn't roll back an abandoned storage transaction: {}", e.0);
+        }
+    }
 }
 
 // Bridges the files capability contract (capabilities/files in
@@ -945,6 +978,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
+        .on_page_load(rollback_abandoned_transaction)
         .manage(FilesState(Mutex::new(None)))
         .manage(AgentServerState::default())
         .manage(ProcessRunnerState::default())
@@ -961,6 +995,9 @@ pub fn run() {
             storage_migrate,
             storage_query,
             storage_execute,
+            storage_begin,
+            storage_commit,
+            storage_rollback,
             files_write,
             files_read,
             files_resolve_path,
