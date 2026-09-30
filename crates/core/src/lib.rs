@@ -4,8 +4,14 @@
 //! allowed to leak back into the Chain SDK across this boundary.
 
 pub mod agent_server;
+pub mod dev_launch;
 pub mod files;
 pub mod http;
+pub mod m4a;
+pub mod models;
 pub mod platform;
 pub mod process_runner;
+pub mod sherpa;
+pub mod speech;
 pub mod storage;
+pub mod vision;

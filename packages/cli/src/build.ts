@@ -3,8 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { largeCacheHint } from "./clean.js";
-import { checkChainApp, nativeProjectDir, resolveTauriBin, tauriEnv } from "./nativeProject.js";
+import { chainCoreFeaturesOrExit } from "./features.js";
 import { ansi, freshState, makeColor, printFailureSummary, processLine } from "./nativeOutput.js";
+import {
+  checkChainApp,
+  nativeProjectDir,
+  resolveTauriBin,
+  taskkillPath,
+  tauriEnv
+} from "./nativeProject.js";
+import { buildPermissionArgs, syncPermissionsOrExit } from "./permissions.js";
 
 export async function build(args: string[]): Promise<void> {
   const cwd = process.cwd();
@@ -19,8 +27,11 @@ export async function build(args: string[]): Promise<void> {
   const color = makeColor(Boolean(process.stdout.isTTY));
   console.log(color(ansi.bold + ansi.cyan, "⛓  chain build") + "\n");
 
+  const permissionArgs = buildPermissionArgs(syncPermissionsOrExit(cwd));
+  const features = chainCoreFeaturesOrExit(cwd);
+  const featureArgs = features.length > 0 ? ["--features", features.join(",")] : [];
   const state = freshState();
-  const child = spawn(tauriBin, ["build", ...args], {
+  const child = spawn(tauriBin, ["build", ...permissionArgs, ...featureArgs, ...args], {
     cwd,
     env: tauriEnv(cwd),
     stdio: ["ignore", "pipe", "pipe"],
@@ -43,7 +54,7 @@ export async function build(args: string[]): Promise<void> {
     if (pid === undefined) return;
     if (process.platform === "win32") {
       try {
-        execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+        execFileSync(taskkillPath(), ["/pid", String(pid), "/T", "/F"]);
       } catch {
         child.kill();
       }

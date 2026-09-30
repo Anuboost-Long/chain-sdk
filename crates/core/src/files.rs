@@ -51,9 +51,15 @@ impl Files {
 
     /// Writes `bytes` under a capability-generated reference — never the
     /// caller's own filename (see CONTRACT.md's Non-goals and the
-    /// Windows MAX_PATH note in research/WINDOWS.md). Retries on the
-    /// astronomically unlikely event of an id collision.
+    /// Windows MAX_PATH note in research/WINDOWS.md).
     pub fn write(&self, bytes: &[u8], extension: Option<&str>) -> Result<String, FilesError> {
+        let (name, path) = self.fresh_path(extension)?;
+        fs::write(&path, bytes)?;
+        Ok(name)
+    }
+
+    /// Retries on the astronomically unlikely event of an id collision.
+    fn fresh_path(&self, extension: Option<&str>) -> Result<(String, PathBuf), FilesError> {
         let ext = extension.filter(|e| is_valid_extension(e));
         for _ in 0..5 {
             let id = generate_id();
@@ -62,13 +68,24 @@ impl Files {
                 None => id,
             };
             let path = self.dir.join(&name);
-            if path.exists() {
-                continue;
+            if !path.exists() {
+                return Ok((name, path));
             }
-            fs::write(&path, bytes)?;
-            return Ok(name);
         }
         Err(FilesError::Other("could not generate a unique file reference".to_string()))
+    }
+
+    /// Moves a finished file in (e.g. one a long job wrote to a temp path,
+    /// so a half-written file never has a reference) under a new
+    /// reference, named the way `write` names one.
+    pub fn adopt(&self, source: &Path, extension: Option<&str>) -> Result<String, FilesError> {
+        let (name, path) = self.fresh_path(extension)?;
+        // rename fails across volumes (a temp dir on another disk).
+        if fs::rename(source, &path).is_err() {
+            fs::copy(source, &path)?;
+            let _ = fs::remove_file(source);
+        }
+        Ok(name)
     }
 
     pub fn read(&self, reference: &str) -> Result<Vec<u8>, FilesError> {
@@ -104,6 +121,27 @@ impl Files {
         Ok(path)
     }
 
+    /// Opens the file in the OS default app for its type, as double-
+    /// clicking it would. Refuses types that run code (see `runs_code`).
+    pub fn open_in_app(&self, reference: &str) -> Result<(), OpenError> {
+        let path = self.existing(reference)?;
+        if runs_code(&path) {
+            return Err(OpenError::Unsupported(format!(
+                "{reference} is a type that runs code when opened, so it isn't opened from the app"
+            )));
+        }
+        native::open(&path)
+    }
+
+    /// Shows the file selected in Finder / File Explorer.
+    pub fn reveal(&self, reference: &str) -> Result<(), OpenError> {
+        native::reveal(&self.existing(reference)?)
+    }
+
+    fn existing(&self, reference: &str) -> Result<PathBuf, OpenError> {
+        self.resolve(reference).map_err(|_| OpenError::NotFound(format!("no such file: {reference}")))
+    }
+
     /// The path to hand a child process as one argv element for a
     /// process-runner `{ fileReference }` argument — see
     /// process-runner/CONTRACT.md. Anything that doesn't resolve to an
@@ -129,6 +167,113 @@ fn extended_length_path(path: &str) -> String {
         format!(r"\\?\{path}")
     } else {
         path.to_string()
+    }
+}
+
+/// Errors from `open_in_app()` and `reveal()`.
+#[derive(Debug)]
+pub enum OpenError {
+    NotFound(String),
+    /// A type that runs code (see `runs_code`), or no implementation here.
+    Unsupported(String),
+    /// No app on this computer opens the file's type.
+    Unavailable(String),
+    Other(String),
+}
+
+/// Double-clicking these runs code — an app, a script, an installer. Our
+/// files carry no download quarantine, so the OS wouldn't warn first;
+/// `open_in_app()` refuses them and `reveal()` leaves the choice to the user.
+const RUNS_CODE: &[&str] = &[
+    // macOS
+    "app", "command", "tool", "terminal", "workflow", "action", "scpt", "scptd", "applescript", "pkg", "mpkg",
+    // shells and interpreters (either OS)
+    "sh", "bash", "zsh", "csh", "ksh", "fish", "py", "pyw", "pl", "rb", "php", "jar",
+    // Windows
+    "exe", "com", "bat", "cmd", "msi", "msp", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "scr", "pif",
+    "lnk", "reg", "hta", "cpl", "msc", "url", "appref-ms", "application", "gadget", "inf",
+];
+
+fn runs_code(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RUNS_CODE.iter().any(|r| r.eq_ignore_ascii_case(e)))
+}
+
+#[cfg(target_os = "macos")]
+mod native {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSArray, NSURL};
+
+    use super::*;
+
+    fn url(path: &Path) -> Result<objc2::rc::Retained<NSURL>, OpenError> {
+        NSURL::from_file_path(path).ok_or_else(|| OpenError::Other(format!("couldn't make a URL for {}", path.display())))
+    }
+
+    pub fn open(path: &Path) -> Result<(), OpenError> {
+        let url = url(path)?;
+        let workspace = NSWorkspace::sharedWorkspace();
+        if workspace.URLForApplicationToOpenURL(&url).is_none() {
+            let kind = path.extension().map_or("these".to_string(), |e| format!(".{}", e.to_string_lossy()));
+            return Err(OpenError::Unavailable(format!("no app on this Mac opens {kind} files")));
+        }
+        if workspace.openURL(&url) {
+            Ok(())
+        } else {
+            Err(OpenError::Other("macOS couldn't open the file".to_string()))
+        }
+    }
+
+    pub fn reveal(path: &Path) -> Result<(), OpenError> {
+        NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url(path)?]));
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod native {
+    use std::os::windows::process::CommandExt;
+
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    use super::*;
+
+    const SE_ERR_NOASSOC: isize = 31;
+
+    pub fn open(path: &Path) -> Result<(), OpenError> {
+        let file = HSTRING::from(path.as_os_str());
+        let result = unsafe { ShellExecuteW(None, w!("open"), &file, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+        // ShellExecute's documented contract: > 32 is success, else an SE_ERR_ code.
+        match result.0 as isize {
+            code if code > 32 => Ok(()),
+            SE_ERR_NOASSOC => Err(OpenError::Unavailable("no app on this PC opens this type of file".to_string())),
+            code => Err(OpenError::Other(format!("Windows couldn't open the file (ShellExecute error {code})"))),
+        }
+    }
+
+    pub fn reveal(path: &Path) -> Result<(), OpenError> {
+        // explorer.exe parses /select, itself, so the quoting must be raw.
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| OpenError::Other(format!("couldn't start File Explorer: {e}")))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+mod native {
+    use super::*;
+
+    pub fn open(_path: &Path) -> Result<(), OpenError> {
+        Err(OpenError::Unsupported("opening files isn't available on this platform yet".to_string()))
+    }
+
+    pub fn reveal(_path: &Path) -> Result<(), OpenError> {
+        Err(OpenError::Unsupported("revealing files isn't available on this platform yet".to_string()))
     }
 }
 
@@ -291,6 +436,52 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         std::env::temp_dir().join(format!("chain-files-test-{}", generate_id()))
+    }
+
+    #[test]
+    fn treats_apps_scripts_and_installers_as_running_code() {
+        for name in ["a.app", "a.COMMAND", "a.sh", "a.exe", "a.ps1", "a.pkg"] {
+            assert!(runs_code(Path::new(name)), "{name}");
+        }
+        for name in ["a.pdf", "a.pptx", "a.zip", "a.png", "a"] {
+            assert!(!runs_code(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn open_and_reveal_reject_what_they_must_not_open() {
+        let dir = temp_dir();
+        let files = Files::open(&dir).unwrap();
+        assert!(matches!(files.open_in_app("../etc/passwd"), Err(OpenError::NotFound(_))));
+        let gone = files.write(b"x", Some("pdf")).unwrap();
+        files.delete(&gone).unwrap();
+        assert!(matches!(files.open_in_app(&gone), Err(OpenError::NotFound(_))));
+        assert!(matches!(files.reveal(&gone), Err(OpenError::NotFound(_))));
+
+        let script = files.write(b"#!/bin/sh\necho hi\n", Some("command")).unwrap();
+        assert!(matches!(files.open_in_app(&script), Err(OpenError::Unsupported(_))));
+
+        #[cfg(target_os = "macos")]
+        {
+            let unknown = files.write(b"x", Some("zzqq9")).unwrap();
+            assert!(matches!(files.open_in_app(&unknown), Err(OpenError::Unavailable(m)) if m.contains(".zzqq9")));
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn adopts_a_finished_file_under_a_new_reference() {
+        let dir = temp_dir();
+        let files = Files::open(&dir.join("managed")).unwrap();
+        let source = dir.join("partial.m4a");
+        fs::write(&source, b"audio").unwrap();
+
+        let reference = files.adopt(&source, Some("m4a")).unwrap();
+        assert!(reference.ends_with(".m4a"));
+        assert!(!source.exists());
+        assert_eq!(files.read(&reference).unwrap(), b"audio");
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

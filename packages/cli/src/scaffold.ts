@@ -102,23 +102,45 @@ export function patchTauriConf(raw: string): string {
     assetProtocol.scope.push(FILES_CAPABILITY_SCOPE);
   }
 
+  // chain-core's speech bridge is Swift (crates/core/build.rs), and Swift
+  // concurrency only links from the OS's /usr/lib/swift when the app
+  // targets macOS 12+ — below that the binary points at an @rpath copy
+  // it can't find and won't launch. Raises an older minimum, keeps a higher one.
+  conf.bundle ??= {};
+  conf.bundle.macOS ??= {};
+  const minimum = conf.bundle.macOS.minimumSystemVersion;
+  if (!minimum || compareVersions(minimum, MIN_MACOS) < 0) {
+    conf.bundle.macOS.minimumSystemVersion = MIN_MACOS;
+  }
+
   return JSON.stringify(conf, null, 2) + "\n";
 }
 
+const MIN_MACOS = "12.0";
+
+function compareVersions(a: string, b: string): number {
+  const [pa, pb] = [a, b].map((v) => v.split(".").map(Number));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 const DEV_INSPECTOR_FEATURE =
-  '[features]\n' +
-  '# Only `chain dev` passes --features chain-dev-inspector; `chain build`\n' +
-  '# never does, so a release binary contains none of dev_inspector.rs.\n' +
-  'chain-dev-inspector = []';
+  "[features]\n" +
+  "# Only `chain dev` passes --features chain-dev-inspector; `chain build`\n" +
+  "# never does, so a release binary contains none of dev_inspector.rs.\n" +
+  "chain-dev-inspector = []";
 
 const DEV_PROFILE =
-  '# Full debug info for Tauri\'s ~400 dependencies roughly doubles target/.\n' +
-  '# Your own code keeps file:line in backtraces.\n' +
-  '[profile.dev]\n' +
+  "# Full debug info for Tauri's ~400 dependencies roughly doubles target/.\n" +
+  "# Your own code keeps file:line in backtraces.\n" +
+  "[profile.dev]\n" +
   'debug = "line-tables-only"\n' +
-  '\n' +
+  "\n" +
   '[profile.dev.package."*"]\n' +
-  'debug = false';
+  "debug = false";
 
 export function patchCargoToml(raw: string): string {
   // A pinned git dependency, not a local path: chain-core lives in the
@@ -136,10 +158,7 @@ export function patchCargoToml(raw: string): string {
   // create-tauri-app's staticlib/cdylib only exist for iOS/Android builds;
   // desktop links the rlib, and the two extra link outputs cost ~300 MB
   // of target/ and link time on every dev rebuild.
-  out = out.replace(
-    /^crate-type = \["staticlib", "cdylib", "rlib"\]$/m,
-    'crate-type = ["rlib"]'
-  );
+  out = out.replace(/^crate-type = \["staticlib", "cdylib", "rlib"\]$/m, 'crate-type = ["rlib"]');
   if (!/^\[profile\.dev\]/m.test(out)) {
     out = `${out.trimEnd()}\n\n${DEV_PROFILE}\n`;
   }
@@ -175,9 +194,14 @@ export type TrackedFile =
 export const TRACKED_FILES: TrackedFile[] = [
   { relPath: "package.json", kind: "patched", patch: patchPackageJson },
   { relPath: "vite.config.ts", kind: "patched", patch: (raw) => patchViteConfig(raw) },
-  { relPath: ".chain/native/tauri.conf.json", kind: "patched", patch: (raw) => patchTauriConf(raw) },
+  {
+    relPath: ".chain/native/tauri.conf.json",
+    kind: "patched",
+    patch: (raw) => patchTauriConf(raw)
+  },
   { relPath: ".chain/native/Cargo.toml", kind: "patched", patch: patchCargoToml },
   { relPath: ".chain/native/src/lib.rs", kind: "template", templateName: "lib.rs" },
+  { relPath: ".chain/native/build.rs", kind: "template", templateName: "build.rs" },
   {
     relPath: ".chain/native/src/dev_inspector.rs",
     kind: "template",

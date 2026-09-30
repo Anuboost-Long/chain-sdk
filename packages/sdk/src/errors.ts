@@ -10,6 +10,8 @@ export type ChainErrorCode =
   | "UNAVAILABLE"
   | "INVALID_ARGUMENT"
   | "CANCELLED"
+  | "INTEGRITY_FAILED"
+  | "TOO_LARGE"
   | "NATIVE_FAILURE";
 
 export interface ChainError {

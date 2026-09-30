@@ -2,9 +2,24 @@ import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_proces
 import fs from "node:fs";
 import type { Readable } from "node:stream";
 
-import { checkChainApp, resolveTauriBin, sharedDevTargetDir, tauriEnv } from "./nativeProject.js";
 import { largeCacheHint } from "./clean.js";
-import { ansi, freshState, makeColor, printFailureSummary, processLine, type NativeOutputState } from "./nativeOutput.js";
+import { chainCoreFeaturesOrExit } from "./features.js";
+import {
+  ansi,
+  freshState,
+  makeColor,
+  printFailureSummary,
+  processLine,
+  type NativeOutputState
+} from "./nativeOutput.js";
+import {
+  checkChainApp,
+  resolveTauriBin,
+  sharedDevTargetDir,
+  taskkillPath,
+  tauriEnv
+} from "./nativeProject.js";
+import { syncPermissionsOrExit } from "./permissions.js";
 
 export async function dev(args: string[]): Promise<void> {
   const cwd = process.cwd();
@@ -21,7 +36,10 @@ export async function dev(args: string[]): Promise<void> {
 
   console.log(color(ansi.bold + ansi.cyan, "⛓  chain dev") + "\n");
 
-  const cacheHint = largeCacheHint(process.env.CARGO_TARGET_DIR || sharedDevTargetDir(), "chain clean --all");
+  const cacheHint = largeCacheHint(
+    process.env.CARGO_TARGET_DIR || sharedDevTargetDir(),
+    "chain clean --all"
+  );
   if (cacheHint) console.log(color(ansi.gray, `  ${cacheHint}`) + "\n");
 
   let state: NativeOutputState = freshState();
@@ -60,7 +78,7 @@ export async function dev(args: string[]): Promise<void> {
       }
       if (process.platform === "win32") {
         try {
-          execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+          execFileSync(taskkillPath(), ["/pid", String(pid), "/T", "/F"]);
         } catch {
           target.kill();
         }
@@ -97,9 +115,12 @@ export async function dev(args: string[]): Promise<void> {
     state = freshState();
     suppressExitMessage = false;
     const gen = ++generation;
+    // Re-read on every (re)start, so an edited declaration takes effect on "r".
+    syncPermissionsOrExit(cwd);
     // --features chain-dev-inspector powers `chain inspect` — chain build
     // never passes it, so it never ships in a release binary.
-    child = spawn(tauriBin, ["dev", "--features", "chain-dev-inspector", ...args], {
+    const features = ["chain-dev-inspector", ...chainCoreFeaturesOrExit(cwd)].join(",");
+    child = spawn(tauriBin, ["dev", "--features", features, ...args], {
       cwd,
       // A developer's own CARGO_TARGET_DIR still wins.
       env: { CARGO_TARGET_DIR: sharedDevTargetDir(), ...tauriEnv(cwd) },
@@ -119,9 +140,8 @@ export async function dev(args: string[]): Promise<void> {
       state.native.status = code ? "error" : "stopped";
       const restartHint = canReadKeys ? " — press r to restart, q to quit" : "";
       if (code) printFailureSummary("tauri dev", code, state, color);
-      console.log(
-        `  ${color(ansi.gray, `── tauri dev exited (code ${code ?? "unknown"})${restartHint} ──`)}`
-      );
+      const exitLine = `── tauri dev exited (code ${code ?? "unknown"})${restartHint} ──`;
+      console.log(`  ${color(ansi.gray, exitLine)}`);
       if (!canReadKeys) process.exit(code ?? 1);
     });
   }
@@ -163,7 +183,10 @@ export async function dev(args: string[]): Promise<void> {
       if (key === "v") {
         verbose = !verbose;
         console.log(
-          color(ansi.gray, verbose ? "── verbose mode on — press v to go back ──" : "── verbose mode off ──")
+          color(
+            ansi.gray,
+            verbose ? "── verbose mode on — press v to go back ──" : "── verbose mode off ──"
+          )
         );
       }
     });

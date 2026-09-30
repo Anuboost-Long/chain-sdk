@@ -38,3 +38,8 @@ cargo build   # from repo root, once Rust is installed
 <capability>;` here for each new capability's Rust module.
 - `crates/core/src/platform.rs` — the platform capability's Rust-side
   stub (see `platform-capability` doc for what's left to implement).
+- `crates/core/src/dev_launch.rs` — not a capability: the relaunch that
+  makes a `chain dev` binary responsible for its own macOS permission
+  prompts (mneme request 22). Called from the app template's `run()`
+  behind `chain-dev-inspector`; see agent-docs/framework/command/README.md
+  ("Permission prompts under `chain dev`").

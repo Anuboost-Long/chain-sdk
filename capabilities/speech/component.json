@@ -1,0 +1,16 @@
+{
+  "name": "speech",
+  "description": "On-device speech-to-text for a stored recording, by desktop.files reference.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/speech/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

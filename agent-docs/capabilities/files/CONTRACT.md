@@ -109,6 +109,30 @@ file name the user settled on — never the path — or `null` on cancel.
   prompt; the capability adds nothing on top.
 - Shares `pick()`'s one-panel-at-a-time rule.
 
+## `desktop.files.open(reference)` and `desktop.files.reveal(reference)`
+
+Mneme request 25 (attachments). `open` opens the stored file in the OS
+default app for its type, as double-clicking it in Finder / File Explorer
+would (NSWorkspace on macOS, `ShellExecute` on Windows); `reveal` shows
+it selected in Finder / File Explorer (request 17's left-out half). Both
+resolve once the OS has accepted the request, not when the app finishes
+launching. Neither exposes the path.
+
+- The OS picks the app by the extension the file was written with
+  (`write(bytes, { extension })`). A file written without one opens in
+  whatever the OS uses for untyped data (TextEdit on macOS).
+- **`open` refuses types that run code** — apps, scripts, installers
+  (`.app`, `.command`, `.sh`, `.pkg`, `.exe`, `.bat`, `.ps1`, `.msi`,
+  `.lnk`, …; the list is `RUNS_CODE` in `crates/core/src/files.rs`) —
+  with `UNSUPPORTED`. Files the app stored carry no download quarantine,
+  so the OS wouldn't warn before running one; a file imported from the
+  web must not become one click from running. `reveal` still works for
+  them, leaving the choice to the user in Finder.
+- `NOT_FOUND` — an unknown, malformed or deleted reference.
+- `UNAVAILABLE` — no app on this computer opens that type (the message
+  names the extension).
+- `UNSUPPORTED` — a type that runs code (`open` only), or Linux.
+
 ## Errors
 
 - A `reference` that isn't a well-formed capability-generated id (or that
@@ -143,8 +167,8 @@ file name the user settled on — never the path — or `null` on cancel.
 - No metadata (size, mime type, created-at) returned by any method — the
   consuming app already tracks whatever metadata it needs (mneme's
   `attachment.mime_type` column, for instance) at the app level.
-- **`save()` has no "reveal in Finder"** (request 17's optional half) —
-  add one only when an app needs it, without exposing the path.
+- `open` has no "open with…" choice of app and no way to open a type
+  that runs code; `reveal` shows one file, not a selection.
 - **`pick()` never returns a path, and has no folder
   picking or "remember last folder" option** — only what request 16
   needs. It also has no size limit or streaming: bytes are read whole

@@ -9,6 +9,11 @@ export function nativeProjectDir(cwd: string): string {
   return path.join(cwd, ".chain/native");
 }
 
+/** taskkill by absolute path, so a `taskkill` earlier on PATH can't stand in for it. */
+export function taskkillPath(): string {
+  return path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "taskkill.exe");
+}
+
 export function resolveTauriBin(cwd: string): string {
   const bin = process.platform === "win32" ? "tauri.cmd" : "tauri";
   return path.join(cwd, "node_modules", ".bin", bin);

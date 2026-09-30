@@ -39,4 +39,8 @@ export interface FilesApi {
   pick(options?: PickOptions): Promise<PickedFile[]>;
   /** Always shows the save panel; resolves `null` when the user cancels. */
   save(bytes: Uint8Array, options?: SaveOptions): Promise<SavedFile | null>;
+  /** Opens the file in the OS default app for its type, as double-clicking it would. */
+  open(reference: string): Promise<void>;
+  /** Shows the file selected in Finder / File Explorer. */
+  reveal(reference: string): Promise<void>;
 }

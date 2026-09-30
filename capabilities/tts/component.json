@@ -1,0 +1,16 @@
+{
+  "name": "tts",
+  "description": "On-device text-to-speech with downloaded voice models; GPL-3.0 opt-in per app.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/tts/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

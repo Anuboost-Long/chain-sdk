@@ -171,7 +171,13 @@ Implemented and verified for real on macOS:
   cancel returned `null` and wrote nothing; `extensions: [".json"]` →
   `INVALID_ARGUMENT`; `pick()` while the save panel was open →
   `UNAVAILABLE`. Test files were deleted afterwards.
-- Not built: request 17's optional "reveal in Finder".
+- `open`/`reveal` (request 25, 2026-09-30), macOS 26.6: unit tests
+  (runnable types, `NOT_FOUND` for malformed/deleted references, a
+  `.command` refused, an unknown `.zzqq9` → `UNAVAILABLE` without
+  launching anything), and end to end in the playground: a stored PDF
+  opened in Preview and was revealed selected in Finder (confirmed by
+  the user on screen). Windows half type-checked (`cargo clippy
+  --target x86_64-pc-windows-msvc` on the module alone), never run.
 
 ## What's NOT done yet (next steps for an agent to pick up)
 
@@ -193,6 +199,9 @@ Implemented and verified for real on macOS:
       dev server is restarted to pick up the new Cargo feature — not yet
       confirmed there specifically, only in `apps/playground`.
 
+- [ ] Verify `open`/`reveal` on Windows: `ShellExecuteW` opens a .pdf,
+      `SE_ERR_NOASSOC` (31) → `UNAVAILABLE` for an unknown extension,
+      `explorer.exe /select,"…"` selects the file (paths with spaces).
 - [ ] Verify `pick()` on Windows (`research/WINDOWS.md` checklist):
       owned dialog, filters, cancel, multi-select.
 - [ ] Check whether a Dock-icon click (app "reopen") while the `pick()`

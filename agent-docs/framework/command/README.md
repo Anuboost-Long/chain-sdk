@@ -61,7 +61,7 @@ touching any of this:
 
 - `crates/core` holds the real native logic; a scaffolded app's own
   `.chain/native/src/lib.rs` is just a thin generated wrapper `chain
-  update` regenerates (see `templates/lib.rs`) — there's rarely a reason
+update` regenerates (see `templates/lib.rs`) — there's rarely a reason
   for an app developer to open it, so it's hidden the way `node_modules`
   is, not deleted or excluded from git.
 - This only works because `@tauri-apps/cli` (v2.0.4+) does **not**
@@ -78,7 +78,7 @@ touching any of this:
   causes is `tauri.conf.json`'s `frontendDist`, which is `"../../dist"`
   instead of `"../dist"` (`patchTauriConf` in `scaffold.ts`).
   `beforeDevCommand`/`beforeBuildCommand` stay plain strings (`"npm run
-  dev:web"`) unchanged — `npm run` itself walks up looking for the
+dev:web"`) unchanged — `npm run` itself walks up looking for the
   nearest `package.json` regardless of the cwd it's invoked from, so the
   extra nesting level doesn't matter there.
 - Running `tauri dev`/`tauri build` directly (bypassing `chain`) won't
@@ -178,8 +178,8 @@ instead of depending on real terminal emulation:
   child processes; a plain `child.kill()` only signals the immediate
   `tauri` process and leaves those running — the old Vite dev server
   keeps holding its port, so the next spawn's Vite fails with `Port ...
-  already in use` / `beforeDevCommand terminated with a non-zero status
-  code`, and the old app window never closes. `spawnTauri()` spawns with
+already in use` / `beforeDevCommand terminated with a non-zero status
+code`, and the old app window never closes. `spawnTauri()` spawns with
   `detached: true` so the child is the leader of its own process group;
   `killChildTree()` (src/dev.ts) signals the negative pid to reach that
   whole group on POSIX (`taskkill /pid <pid> /T /F` on Windows, which has
@@ -218,7 +218,7 @@ actually hand off, so this is now fixed:
 
 - **`chain-core`** (`patchCargoToml` in `scaffold.ts`) is a pinned **git**
   dependency: `chain-core = { git = "<chain-sdk's origin URL>", rev =
-  "<commit>" }`. Cargo resolves a named crate from anywhere in a cloned
+"<commit>" }`. Cargo resolves a named crate from anywhere in a cloned
   repo's workspace, so no `path:`/subdirectory trick is needed — this works
   from any machine with network access, verified against the real
   `github.com/Anuboost-Long/chain-sdk` remote (see that PR's verification
@@ -233,7 +233,7 @@ actually hand off, so this is now fixed:
   (there's no chain-sdk checkout sitting next to it any more). They're
   baked into `@chain/cli`'s own build via `packages/cli/scripts/sync-meta.mjs`,
   which writes `packages/cli/src/publishMeta.ts` (gitignored, generated —
-  never hand-edit it) from the *actual* chain-sdk repo state, and only ever
+  never hand-edit it) from the _actual_ chain-sdk repo state, and only ever
   runs while this really is that repo (`prepare`/`prepublishOnly`, both
   no-ops on a registry install). `sync-meta.mjs --strict` (what
   `prepublishOnly` uses) refuses to run against a dirty working tree or a
@@ -295,6 +295,91 @@ closing line: green `● Build finished` on success, or red
 `printFailureSummary()`) so the cause isn't lost in the scrollback —
 e.g. Tauri's `Error failed to build app: Target x86_64-apple-darwin is
 not installed …` when a `--target` triple's Rust target is missing.
+
+### GPL opt-in — `package.json` "chain.gpl"
+
+`"chain": { "gpl": true }` makes `chain dev`/`chain build` add
+`--features chain-core/tts` (`src/features.ts`), which links sherpa-onnx's
+TTS build including espeak-ng (GPL-3.0) and turns on `desktop.tts`. The
+app's releases then carry GPL-3.0 obligations. Absent or `false`: no GPL
+code. Any other value fails the run. See
+`agent-docs/capabilities/models/research/LICENSING.md`.
+
+### macOS 12 minimum and the app `build.rs`
+
+chain-core's speech capability includes Swift (SpeechAnalyzer), which
+links Swift Concurrency from `/usr/lib/swift`. Two tracked pieces make
+that load in every build: `.chain/native/build.rs` (template `build.rs`)
+adds `-rpath /usr/lib/swift` to the app binary — `tauri dev` builds for
+Rust's default deployment target (11.0), where the linker records an
+`@rpath` install name — and `patchTauriConf` raises
+`bundle.macOS.minimumSystemVersion` to `12.0` (a higher value is kept).
+Without the rpath the app dies at launch with `dyld: Library not loaded:
+@rpath/libswift_Concurrency.dylib`. Existing apps get both from `chain
+update`.
+
+### App permissions — `package.json` "chain.permissions"
+
+An app declares OS permissions in its own `package.json`, never in
+`.chain/native/`:
+
+```json
+"chain": {
+  "permissions": {
+    "microphone": "Why the app records audio.",
+    "speechRecognition": "Why the app transcribes audio."
+  }
+}
+```
+
+Each value is the sentence the OS prompt shows. On every run, `chain dev`
+and `chain build` (`src/permissions.ts`) write `.chain/native/Info.plist`
+with the matching `NS…UsageDescription` keys (Tauri embeds it in the dev
+binary and merges it into the bundle) and, for `microphone`,
+`.chain/native/Entitlements.plist` with
+`com.apple.security.device.audio-input`, which `chain build` passes to
+`tauri build` as a `--config` override. Both files are marked GENERATED
+and removed when nothing is declared; a hand-written `Info.plist` is left
+alone with a warning. An unknown key fails the run. Changing a
+declaration needs no `chain update`. See
+`agent-docs/capabilities/microphone/` and `speech/`.
+
+### Permission prompts under `chain dev`
+
+macOS asks for a privacy-gated permission (microphone, speech
+recognition, ...) on behalf of the _responsible_ process. A binary that
+`tauri dev` starts inherits responsibility from whatever terminal or
+editor ran `chain dev`, so without help the request is judged as that
+app's: no prompt, a silent `NotAllowedError`, and the Chain app never
+listed in System Settings → Privacy & Security.
+
+So the template's `run()` calls
+`chain_core::dev_launch::become_responsible_for_itself()` first thing,
+under the `chain-dev-inspector` feature (only `chain dev` passes it, so
+`chain build` output never contains the call). If the process isn't
+already responsible for itself, it relaunches its own binary with
+`responsibility_spawnattrs_setdisclaim` — what terminals and editors do
+for their own children — and waits, exiting with the relaunched copy's
+status. The relaunched app then prompts with its own name and the
+embedded Info.plist sentence, and gets its own Privacy row. Nothing
+changes for the developer: same one command, same log stream (stdio is
+inherited), same hot reload. The relaunched app holds the read end of a
+pipe only the waiter can write to and exits on EOF, because `tauri dev`
+SIGKILLs the pid it started on every Rust rebuild and a SIGKILL can't
+be forwarded. Both functions are private libSystem SPI looked up with
+`dlsym`, so if a future macOS drops them this falls back to the old
+behavior instead of failing to launch. No-op on other OSes.
+
+TCC records a dev binary's answer by its **path** (e.g.
+`<cache>/target/debug/mneme`), not by the bundle identifier, and keeps
+it across Rust rebuilds. `tccutil reset Microphone <id>` only takes
+bundle identifiers, so it can't target the dev entry — to be asked
+again, remove the row with the – button in System Settings → Privacy &
+Security → Microphone (or `tccutil reset Microphone`, which resets every
+app). In testing, switching the row _off_ in Settings didn't stick
+across the next relaunch (macOS prompted again); answering the prompt
+"Don't Allow" did. The built `.app` is a separate entry, keyed by its
+bundle identifier.
 
 ### `chain update` — pull in chain-sdk changes without losing your edits
 
@@ -416,7 +501,7 @@ the Rust side only gained `rect`; everything OS-specific lives in
 `inspect.ts`.
 
 - **`screenshot [path] [--selector <sel>]`** shells out to `screencapture
-  -x -R x,y,w,h` (confirmed empirically: an N-point `-R` rect produces an
+-x -R x,y,w,h` (confirmed empirically: an N-point `-R` rect produces an
   N×scaleFactor-pixel image — points, not physical pixels). No selector
   captures the whole webview viewport; `--selector` crops to one
   element's `getBoundingClientRect()`.
@@ -437,7 +522,7 @@ the Rust side only gained `rect`; everything OS-specific lives in
   `viewportRegion()` in `inspect.ts` before touching it.** `rect` reports
   physical pixels; screencapture/cliclick want points, so everything
   divides by `scaleFactor` once. More importantly: Tauri's
-  `inner_position()`/`inner_size()` measure the window's *content view*,
+  `inner_position()`/`inner_size()` measure the window's _content view_,
   not the WKWebView's actual on-screen viewport — there's a real gap
   between them (confirmed against a live window: `window.innerHeight`
   read 32pt less than what `rect` implied) even with an overlay title
@@ -447,7 +532,7 @@ the Rust side only gained `rect`; everything OS-specific lives in
   drags land on the right pixels regardless of a given app's title-bar
   style.
 - **Permissions are one-time OS grants to whatever terminal runs `chain
-  inspect`** (Screen Recording for `screenshot`; Accessibility for
+inspect`** (Screen Recording for `screenshot`; Accessibility for
   `drag`'s synthetic input; Automation, for `drag`'s window-activation
   step, to let that terminal script System Events) — not to the app
   binary. macOS can't grant these to a headless/agent-driven process via
@@ -497,16 +582,16 @@ schema is **declared as classes**, and migrations (Up **and** Down SQL)
 are **generated** from changes to them, with a full applied-history
 table. Command-for-command:
 
-| Chain | EF Core |
-|---|---|
-| `chain migration add <name>` | `dotnet ef migrations add` |
-| `chain migration add <name> --empty` | an empty migration to hand-write |
-| `chain migration remove` | `dotnet ef migrations remove` |
-| `chain migration list` / `chain database list` | `dotnet ef migrations list` |
-| `chain migration script [from] [to]` | `dotnet ef migrations script` |
-| `chain migration check` | `dotnet ef migrations has-pending-model-changes` |
-| `chain database update [target]` | `dotnet ef database update [target]` (up **or down**) |
-| `chain database scaffold [--force]` | `dotnet ef dbcontext scaffold` |
+| Chain                                          | EF Core                                               |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| `chain migration add <name>`                   | `dotnet ef migrations add`                            |
+| `chain migration add <name> --empty`           | an empty migration to hand-write                      |
+| `chain migration remove`                       | `dotnet ef migrations remove`                         |
+| `chain migration list` / `chain database list` | `dotnet ef migrations list`                           |
+| `chain migration script [from] [to]`           | `dotnet ef migrations script`                         |
+| `chain migration check`                        | `dotnet ef migrations has-pending-model-changes`      |
+| `chain database update [target]`               | `dotnet ef database update [target]` (up **or down**) |
+| `chain database scaffold [--force]`            | `dotnet ef dbcontext scaffold`                        |
 
 **The model.** `db/schema/*.ts` holds `@Table` classes (decorators from
 `@chain/sdk/schema`, `packages/sdk/src/schema.ts`). The decorators do
@@ -662,7 +747,7 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `clean`, `doctor`, `--help`, `--version`, unknown-command and no-args handling).
   Start here for anything about how a flag or subcommand is recognized.
 - `packages/cli/src/migration.ts` — `chain migration add/remove/list/
-  script/check`: rename detection (`--rename-*` flags, then prompts),
+script/check`: rename detection (`--rename-*` flags, then prompts),
   `latestModel()` (the snapshot `add` diffs against), `migrationStatus()`.
 - `packages/cli/src/schema/` — the migration engine, one job per file:
   `model.ts` (the schema model and its canonical form), `read-classes.ts`
@@ -673,13 +758,13 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   `storage.rs`), `migrations-dir.ts` (finding `db/`, loading and writing
   migration files and snapshots, `regenerateIndex()`).
 - `packages/cli/test/schema.test.mjs` — `npm test` (after `npm run
-  build`): the engine against real SQLite. Add a case here for any new
+build`): the engine against real SQLite. Add a case here for any new
   kind of schema change before supporting it.
 - `packages/cli/src/nativeProject.ts` — shared by `dev.ts`/`build.ts`/
   `inspect.ts`/`database.ts`: `resolveTauriBin()`, `nativeProjectDir()`
   (`.chain/native`), `checkChainApp()` (the "doesn't look like a Chain
   app" / "still on src-tauri, run `chain update`" errors), `tauriEnv()`
-  (sets `TAURI_APP_PATH` — this is *the* mechanism that makes
+  (sets `TAURI_APP_PATH` — this is _the_ mechanism that makes
   `.chain/native` discoverable to Tauri's CLI, see the section above),
   `inspectorInfoPath()` (where `chain inspect` finds the running bridge's
   port+token), `sharedDevTargetDir()` (`chain dev`'s cross-app Cargo
@@ -738,7 +823,7 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   and `patchTauriConf()`'s `frontendDist` are both specific to
   `.chain/native`, not `src-tauri` — see the depth note above before
   changing either. `patchTauriConf()` also sets `app.security.assetProtocol` (`enable:
-  true`, `scope: ["$APPDATA/files/*"]`) and `patchCargoToml()` adds the
+true`, `scope: ["$APPDATA/files/*"]`) and `patchCargoToml()` adds the
   `"protocol-asset"` Cargo feature to the `tauri` dependency — both
   required for `desktop.files.url()` to actually work (see the `files`
   capability's `AGENTS.md` for the real bug this fixes: without either
@@ -758,7 +843,7 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
 - `packages/cli/src/init.ts` — runs `create-tauri-app` (which still
   writes `src-tauri/`), immediately renames that to `.chain/native/`,
   then calls `writeTrackedFiles()`, snapshots `.chain/baseline/`, `npm
-  install`, `git init`.
+install`, `git init`.
 - `packages/cli/src/update.ts` — the one-time `src-tauri` →
   `.chain/native` migration (see above), then the three-way merge:
   `mergeFile()` (wraps `git merge-file`), `syncTextFile()` (per-file

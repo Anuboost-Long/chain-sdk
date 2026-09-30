@@ -6,6 +6,7 @@ import { chainError } from "./errors";
 const NOT_FOUND_PREFIX = "NOT_FOUND: ";
 const INVALID_ARGUMENT_PREFIX = "INVALID_ARGUMENT: ";
 const UNAVAILABLE_PREFIX = "UNAVAILABLE: ";
+const UNSUPPORTED_PREFIX = "UNSUPPORTED: ";
 
 function requireTauri(method: string): void {
   if (!isTauri()) {
@@ -28,6 +29,9 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
     }
     if (typeof error === "string" && error.startsWith(UNAVAILABLE_PREFIX)) {
       throw chainError("UNAVAILABLE", error.slice(UNAVAILABLE_PREFIX.length));
+    }
+    if (typeof error === "string" && error.startsWith(UNSUPPORTED_PREFIX)) {
+      throw chainError("UNSUPPORTED", error.slice(UNSUPPORTED_PREFIX.length));
     }
     throw chainError(
       "NATIVE_FAILURE",
@@ -60,6 +64,16 @@ export const files: FilesApi = {
   async delete(reference: string): Promise<void> {
     requireTauri("delete");
     return call<void>("files_delete", { reference });
+  },
+
+  async open(reference: string): Promise<void> {
+    requireTauri("open");
+    return call<void>("files_open", { reference });
+  },
+
+  async reveal(reference: string): Promise<void> {
+    requireTauri("reveal");
+    return call<void>("files_reveal", { reference });
   },
 
   async pick(options?: PickOptions): Promise<PickedFile[]> {

@@ -12,6 +12,11 @@ to see what actually exists vs. what's just planned.
 | Http            | 🧪    | ⏳      | ⏳    | Draft    |
 | AgentServer     | 🧪    | ⏳      | ⏳    | Draft    |
 | ProcessRunner   | 🧪    | ⏳      | ⏳    | Draft    |
+| Microphone      | 🧪    | ⏳      | ⏳    | Draft    |
+| Vision          | 🧪    | ⚠       | ⏳    | Draft    |
+| Speech          | 🧪    | ⏳      | ⏳    | Draft    |
+| Models          | 🧪    | ⏳      | ⏳    | Draft    |
+| Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -45,8 +50,9 @@ not yet verified on Windows
 (`agent-docs/capabilities/files/research/WINDOWS.md` has the specific
 risks to check first: MAX_PATH limits, antivirus file locking).
 
-`http` (a single native-side HTTP GET, returning `status`/`ok`/`body` as
-text) is implemented and verified end to end on macOS — a real request
+`http` (native-side HTTP requests — since 2026-09-28 axios-style: any
+method, headers, params and JSON/form/bytes bodies, with `statusText`,
+`headers` and parsed `data` in the response; originally a single GET) is implemented and verified end to end on macOS — a real request
 through the full React → SDK → Tauri → Rust → `reqwest` path in
 `apps/playground`'s running window, against a real external HTTPS URL
 (`https://example.com`), confirming both the success path (200, real
@@ -97,5 +103,48 @@ native writes the bytes, returns only the file name), and
 managed file's path substituted natively as one argv element) are both
 verified end to end on macOS in a real `chain dev` app; Windows is
 unverified for all three (see each capability's `research/WINDOWS.md`).
+
+`microphone` (mneme request 18) has no JS API: the webview's own
+`getUserMedia` + `MediaRecorder` work once the app declares
+`chain.permissions.microphone` in `package.json`. Verified on macOS in a
+bundled playground build launched on its own (TCC prompt → AAC
+`audio/mp4` recording with pause/resume), and under `chain dev` since
+request 22 (the dev binary relaunches itself responsible for its own
+prompts — see its CONTRACT.md). Windows
+unverified (`agent-docs/capabilities/microphone/research/WINDOWS.md`).
+
+`vision` (mneme request 20 — `recognizeText(bytes, options)` and
+`languages()`, Vision's `VNRecognizeTextRequest` via objc2) is verified on
+macOS: PNG/JPEG/WebP/GIF/HEIC and rotated images read exactly, blank
+images resolve empty, and `INVALID_ARGUMENT`/`UNSUPPORTED` arrive as
+`ChainError`s end to end in `apps/playground`. Windows (`Windows.Media.Ocr`
+through the `windows` crate) is written and compile-checked but never run
+— hence ⚠; checklist in `agent-docs/capabilities/vision/research/WINDOWS.md`.
+`recognizeDocument` (request 23 — paragraphs, tables with spans, lists
+through macOS 26's Swift-only `RecognizeDocumentsRequest`) is verified on
+macOS 26.6; `UNSUPPORTED` on older macOS and Windows.
+
+`speech` (mneme request 19 — `transcribe(reference, {locale},
+onProgress)`, `cancel()`, `locales()`) is verified on macOS 26 through
+SpeechAnalyzer (chain-core's first Swift code, `crates/core/swift/`): a
+59.9-minute lecture in 51 s with continuous timestamps, cancel,
+one-at-a-time and every error path, end to end in `apps/playground`. The
+pre-26 `SFSpeechRecognizer` fallback is only partly verified (it needs
+Siri & Dictation on). Windows is `UNSUPPORTED`. Because of the Swift
+bridge, apps now carry a template `build.rs` and a macOS 12 minimum —
+see `agent-docs/capabilities/speech/research/MACOS.md`.
+
+`models` (mneme request 21 — `desktop.models` install/cancel/list/remove
+plus `speech.transcribe`'s `engine` option on a bundled, GPL-free
+sherpa-onnx) is verified on macOS end to end in `apps/playground`,
+including an hour-long transcription with Moonshine tiny-en. The Windows
+archive is pinned but has never been built there.
+
+`tts` (request 21 part 2 — `voices`/`synthesize` with Kokoro/Piper, plus
+`compile` for audiobook mode: one AAC file with per-segment timings) is
+verified on macOS end to end; `compile` is `UNSUPPORTED` on Windows until
+its encoder exists (`agent-docs/capabilities/tts/research/WINDOWS.md`). It links espeak-ng (GPL-3.0), so it's only
+compiled into apps that opt in with package.json `"chain": { "gpl": true }`
+(`agent-docs/capabilities/models/research/LICENSING.md`).
 
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.

@@ -195,3 +195,128 @@ candidate fixes are documented there, none chosen yet
 Possible package:
 `@chain/sdk` (bundled in core, not a separate package — same reasoning
 as Platform/System)
+
+## Microphone
+
+Used by:
+mneme (request 18 — Phase 16 "Audio Recording": record lectures and
+notes in the page editor)
+
+Generalizable:
+Yes — any app that records audio needs the OS declaration; the recording
+itself is the web platform's
+
+Contract:
+Draft (`agent-docs/capabilities/microphone/CONTRACT.md`; no `contract.ts` —
+there's no JS API, only the `package.json` "chain.permissions.microphone"
+declaration)
+
+macOS:
+Implemented and verified in a bundled playground build: TCC prompt, then
+an AAC `audio/mp4` recording with pause/resume stored through
+`desktop.files`
+
+Windows:
+Not verified — WebView2 is expected to show its own prompt; see
+`agent-docs/capabilities/microphone/research/WINDOWS.md`
+
+Possible package:
+None — CLI build-time declaration plus web APIs
+
+## Vision
+
+Used by:
+mneme (request 20 — Phase 15 "OCR": "Extract text" on image blocks and
+chat attachments)
+
+Generalizable:
+Yes — exact on-device text extraction from an image is useful to any app
+that handles screenshots or photos; nothing in it knows about mneme
+
+Contract:
+Draft (`agent-docs/capabilities/vision/CONTRACT.md`,
+`capabilities/vision/contract.ts`)
+
+macOS:
+Implemented with Vision's `VNRecognizeTextRequest` (objc2 bindings) and
+verified in `apps/playground` across five image formats, rotation,
+language selection and both error paths
+
+Windows:
+Written against `Windows.Media.Ocr` (the `windows` crate) and
+compile-checked, not yet run — see
+`agent-docs/capabilities/vision/research/WINDOWS.md`
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Speech
+
+Used by:
+mneme (request 19 — Phase 17 "Speech-to-Text": transcribe recordings,
+then clean up and summarize the text with its existing AI actions)
+
+Generalizable:
+Yes — on-device transcription of stored audio fits any note-taking,
+meeting or media app; it knows nothing about lectures
+
+Contract:
+Draft (`agent-docs/capabilities/speech/CONTRACT.md`,
+`capabilities/speech/contract.ts`)
+
+macOS:
+Implemented. macOS 26+ uses SpeechAnalyzer through a Swift bridge
+(verified end to end, including an hour-long file); older macOS falls
+back to on-device `SFSpeechRecognizer` (partly verified)
+
+Windows:
+Not started — `UNSUPPORTED`; see
+`agent-docs/capabilities/speech/research/WINDOWS.md`
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Models
+
+Used by:
+mneme (request 21 — Settings → Extensions: optional open-source speech
+models the user downloads and removes)
+
+Generalizable:
+Yes — verified, sandboxed download of data packs for bundled engines fits
+any app offering optional on-device AI
+
+Contract:
+Draft (`agent-docs/capabilities/models/CONTRACT.md`,
+`capabilities/models/contract.ts`)
+
+macOS:
+Implemented and verified end to end (install, cancel, integrity failure,
+engine transcription of an hour-long lecture)
+
+Windows:
+Engine archive pinned, never built or run there
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Tts
+
+Used by:
+mneme (request 21 part 2 — read-aloud with downloadable Kokoro/Piper voices)
+
+Generalizable:
+Yes, for apps that can accept GPL-3.0 — which is why it's a per-app opt-in
+(`"chain": { "gpl": true }`), never a default
+
+Contract:
+Draft (`agent-docs/capabilities/tts/CONTRACT.md`, `capabilities/tts/contract.ts`)
+
+macOS:
+Implemented and verified end to end (Kokoro multi-lang v1.0, Piper)
+
+Windows:
+Archive pinned, never built
+
+Possible package:
+`@chain/sdk` (bundled in core; engine behind a Cargo feature)
