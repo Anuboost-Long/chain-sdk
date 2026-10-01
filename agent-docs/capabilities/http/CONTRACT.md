@@ -25,6 +25,7 @@ request<T>(config: {
   timeout?: number;                           // ms, default 30000
   responseType?: "text" | "bytes";            // default "text"
   maxBytes?: number;                          // "bytes" only
+  validateStatus?: (status: number) => boolean; // default: 200–299
 }): Promise<HttpResponse<T>>
 
 get / delete / head / options (url, config?)
@@ -50,9 +51,7 @@ Resolves with:
 { status, statusText, ok, headers, body, data }
 ```
 
-- `ok` is `status` 200–299. **A non-2xx response still resolves** — unlike
-  axios, which rejects. Check `ok` (or `status`). This is the contract
-  `get(url)` has had from the start, kept so existing callers don't change.
+- `ok` is `status` 200–299.
 - `headers` — response headers, names lowercased, repeated headers joined
   with `", "` (axios's shape).
 - `body` — the response body as text.
@@ -79,9 +78,38 @@ await desktop.files.write(image.data, "png");
 - The bytes cross IPC as one raw buffer, not JSON, so a 10 MB image stays
   10 MB.
 
+### Error statuses — `validateStatus` (mneme request 27)
+
+Like axios, a response whose status `validateStatus` refuses **rejects**
+— by default anything outside 200–299:
+
+```ts
+try {
+  const { data } = await desktop.http.get<Course[]>(url);
+} catch (e) {
+  if ((e as ChainError).code === "HTTP_ERROR") {
+    const { response } = e as HttpError; // status, headers, body, data of the error response
+  }
+}
+```
+
+The rejection is an `HttpError`: a `ChainError` with `code:
+"HTTP_ERROR"`, `message` `"Request failed with status 404 Not Found"`
+(no trailing text when the server sends no reason phrase), and the full
+`HttpResponse` as `response`. `validateStatus: () => true` resolves
+every response, for a caller that wants to inspect the status itself.
+`validateStatus` runs in the SDK and is never sent native-side.
+
+Until 1 October 2026 every response resolved and callers checked `ok`;
+mneme asked for axios's default so HTTP errors land in the same `catch`
+as network failures (request 27).
+
 ## Errors
 
-Only a request that gets **no** HTTP response rejects:
+- `HTTP_ERROR` — a response came back, but `validateStatus` refused its
+  status (above). `response` holds it.
+
+The rest reject when there's **no** HTTP response at all:
 
 - `INVALID_ARGUMENT` — malformed URL, a scheme other than `http`/`https`,
   an unknown method, or an invalid header name/value. Nothing is sent.

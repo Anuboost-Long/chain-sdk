@@ -19,10 +19,13 @@ is. An `async fn` command just runs as a normal task on Tauri's own
 existing runtime instead of fighting it — see `AGENTS.md` for the full
 reasoning.
 
-**Resolving is not the same as HTTP success.** `get(url)` resolves for
-_any_ response that comes back — 2xx through 5xx — with `status`/`ok`
-(the same meaning `fetch()`'s `Response.ok` has) and the body text. It
-only _rejects_ when no response was received at all: a malformed/
+**Error statuses reject, like axios.** Native code returns every
+response, whatever its status; the SDK (`validated()` in
+`packages/sdk/src/http.ts`) then rejects one whose status
+`validateStatus` refuses — by default anything outside 200–299 — with
+`HTTP_ERROR` and the response attached as `error.response` (mneme
+request 27). `validateStatus: () => true` resolves everything. A request
+that gets no response at all rejects as before: a malformed/
 unsupported-scheme URL (`INVALID_ARGUMENT`), a request that never
 reaches a server (`UNAVAILABLE`), or another native-side failure
 (`NATIVE_FAILURE`).
@@ -41,13 +44,12 @@ rules since course pages don't send permissive
 ```ts
 import { desktop } from "@chain/sdk";
 
-const response = await desktop.http.get("https://school.edu/course/123");
-if (response.ok) {
+try {
+  const response = await desktop.http.get("https://school.edu/course/123");
   const doc = new DOMParser().parseFromString(response.body, "text/html");
   // ... extract headings/paragraphs/links from `doc`
-} else {
-  // response.status is a real HTTP status (404, 500, ...) — the promise
-  // still resolved, it's up to the caller to decide this is a failure
+} catch (e) {
+  // e.code === "HTTP_ERROR" for a 404/500/...; e.response is the response
 }
 ```
 
@@ -65,7 +67,13 @@ await desktop.http.request({ url, method: "PATCH", data: bytes, timeout: 5000 })
 ```
 
 `data` is the parsed JSON when the server answers JSON, else the text;
-`body` is always the text. Unlike axios, a 4xx/5xx **resolves** — check `ok`.
+`body` is always the text. As in axios, a 4xx/5xx **rejects** `HTTP_ERROR`
+unless `validateStatus` says otherwise:
+
+```ts
+const res = await desktop.http.get(url, { validateStatus: () => true }); // every status resolves
+if (!res.ok) console.log(res.status);
+```
 
 A malformed URL or unreachable host rejects instead of resolving:
 
@@ -99,8 +107,8 @@ wiring needed per app.
 ## Files to check
 
 - `agent-docs/capabilities/http/CONTRACT.md` — the semantic contract
-  (API behavior, error model, explicit non-goals — especially "resolving
-  isn't HTTP success" and "no cookies/auth/headers/caching"). Check this
+  (API behavior, error model, explicit non-goals — especially
+  `validateStatus`/`HTTP_ERROR` and "no cookies/caching"). Check this
   before changing behavior or adding a method.
 - `capabilities/http/contract.ts` — the exact types (`HttpApi`,
   `HttpResponse`); change this and both implementations below together,

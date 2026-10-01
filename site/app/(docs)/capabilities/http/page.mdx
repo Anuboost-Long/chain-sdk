@@ -25,7 +25,7 @@ ordinary pages don't send the `Access-Control-Allow-Origin` header a browser req
 Import a page's title and headings from a URL the user pastes:
 
 ```ts title="src/lib/import-page.ts"
-import { desktop, type ChainError } from "@chain/sdk";
+import { desktop, type ChainError, type HttpError } from "@chain/sdk";
 
 export async function importPage(url: string) {
   let response;
@@ -35,11 +35,11 @@ export async function importPage(url: string) {
     const error = e as ChainError;
     if (error.code === "INVALID_ARGUMENT") throw new Error("That doesn't look like a web address. Check the URL.");
     if (error.code === "UNAVAILABLE") throw new Error("Couldn't reach that site. Check your connection.");
+    if (error.code === "HTTP_ERROR") {
+      const { status } = (e as HttpError).response;
+      throw new Error(`The site answered with status ${status}. Check that the page exists.`);
+    }
     throw e;
-  }
-
-  if (!response.ok) {
-    throw new Error(`The site answered with status ${response.status}. Check that the page exists.`);
   }
 
   const doc = new DOMParser().parseFromString(response.body, "text/html");
@@ -66,8 +66,9 @@ Makes a GET request and resolves once any response arrives:
 
 ## Behavior
 
-- **Resolving doesn't mean success.** A 404 or 500 still resolves, with `ok: false` and whatever body the server sent.
-  Check `ok` and decide what it means for your app.
+- **Error statuses reject, like axios.** A status outside 200–299 rejects with `HTTP_ERROR`, and the response is on
+  `error.response`, so you can still read its status, headers, and body. To handle statuses yourself, pass
+  `validateStatus`: `get(url, { validateStatus: () => true })` resolves every response.
 - **Redirects are followed automatically.** You only see the final response, not the redirect chain.
 - **Every call makes a fresh request.** Nothing is cached.
 - **A fixed timeout applies,** so a stalled connection can't hang your app.
@@ -75,10 +76,9 @@ Makes a GET request and resolves once any response arrives:
 
 ## Errors
 
-`get()` rejects only when no response was received at all:
-
 | Code               | When                                                                         |
 | ------------------ | ---------------------------------------------------------------------------- |
+| `HTTP_ERROR`       | The server answered with a status `validateStatus` refuses (by default, outside 200–299). `response` holds the response. |
 | `INVALID_ARGUMENT` | The URL is malformed, or isn't `http` or `https`. Nothing is sent.           |
 | `UNAVAILABLE`      | The server couldn't be reached: DNS failure, connection refused, or timeout. |
 | `NATIVE_FAILURE`   | Anything else, like a TLS handshake failure. `message` has the details.      |

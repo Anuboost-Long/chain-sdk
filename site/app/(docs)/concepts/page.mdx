@@ -42,7 +42,7 @@ interface ChainError {
 }
 ```
 
-`code` is always one of seven values, on every platform:
+`code` is always one of these values, on every platform:
 
 | Code                | Meaning                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------- |
@@ -52,6 +52,7 @@ interface ChainError {
 | `UNAVAILABLE`       | A resource is busy or unreachable: a port in use, a host that can't be reached.     |
 | `INVALID_ARGUMENT`  | The input was rejected before anything ran: an empty command, a malformed URL.      |
 | `CANCELLED`         | The operation was cancelled before it finished.                                     |
+| `HTTP_ERROR`        | An HTTP response came back with an error status. `response` holds it.               |
 | `NATIVE_FAILURE`    | Anything else the OS reported. `message` carries the original text.                 |
 
 Branch on `code`, show `message`, and ignore `nativeCode` and `debugDetails` in app logic. Those two are for debugging

@@ -48,6 +48,7 @@ export type { FilesApi, PickOptions, PickedFile, SaveOptions, SavedFile } from "
 export type {
   HttpApi,
   HttpResponse,
+  HttpError,
   HttpRequestConfig,
   HttpMethod,
   HttpData,

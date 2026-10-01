@@ -133,6 +133,22 @@ code: "INVALID_ARGUMENT" }`.
     session was started and stopped cleanly (`git status` shows no diff
     there).
 
+### Error statuses reject — 1 October 2026
+
+mneme's request 27: a non-2xx status now rejects `HTTP_ERROR` with
+`error.response`, like axios; `validateStatus` overrides it. SDK-only
+(`validated()` in `packages/sdk/src/http.ts`), so the 404-resolves
+verification above now describes the native layer only. Tested against
+a fake `invoke`: 2xx resolves; 404 and 500 reject with the message and
+parsed response; `validateStatus: () => true` and a custom predicate
+resolve; network failures keep their codes; `validateStatus` is never
+sent native-side. The mneme session then verified it in mneme's running
+app against real servers: a 404 rejected `HTTP_ERROR` ("Request failed
+with status 404 Not Found", `response.status` 404),
+`validateStatus: () => true` resolved it with `ok: false`, and both
+callers (`lms-import.ts`, `downloadImage.ts`) were moved to the
+reject-by-default shape.
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Verify on Windows — do NOT mark the contract/component status

@@ -1177,6 +1177,7 @@ type ChainErrorCode =
   | "UNAVAILABLE"
   | "INVALID_ARGUMENT"
   | "CANCELLED"
+  | "HTTP_ERROR"
   | "NATIVE_FAILURE";
 ```
 

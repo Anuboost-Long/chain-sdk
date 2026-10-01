@@ -32,12 +32,14 @@ export interface HttpRequestConfig {
   responseType?: "text" | "bytes";
   /** With responseType "bytes": a longer body rejects TOO_LARGE, without being read past the limit. */
   maxBytes?: number;
+  /** Which statuses resolve; any other rejects HTTP_ERROR. Defaults to 200–299. `() => true` resolves every response. */
+  validateStatus?: (status: number) => boolean;
 }
 
 export interface HttpResponse<T = unknown> {
   status: number;
   statusText: string;
-  /** status is 200–299. A non-2xx response still resolves. */
+  /** status is 200–299. */
   ok: boolean;
   /** Lowercased names; repeated headers joined with ", ". */
   headers: Record<string, string>;
@@ -48,6 +50,14 @@ export interface HttpResponse<T = unknown> {
    * else `body`. With responseType "bytes", the body as a Uint8Array.
    */
   data: T;
+}
+
+/** How a response whose status `validateStatus` refuses rejects. A `ChainError` with the response attached. */
+export interface HttpError<T = unknown> {
+  code: "HTTP_ERROR";
+  /** "Request failed with status 404 Not Found" */
+  message: string;
+  response: HttpResponse<T>;
 }
 
 type Config = Omit<HttpRequestConfig, "url" | "method" | "data">;

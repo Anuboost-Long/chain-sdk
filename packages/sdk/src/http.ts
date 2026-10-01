@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   HttpApi,
   HttpData,
+  HttpError,
   HttpParamValue,
   HttpRequestConfig,
   HttpResponse
@@ -79,7 +80,20 @@ function unframe(buffer: ArrayBuffer): NativeResponse & { bytes: Uint8Array } {
   return { ...head, body: "", bytes: new Uint8Array(buffer, 4 + headLength) };
 }
 
-async function send<T>(method: string, config: HttpRequestConfig): Promise<HttpResponse<T>> {
+const isSuccess = (status: number) => status >= 200 && status < 300;
+
+/** Like axios: a status `validateStatus` refuses rejects, with the response attached. */
+function validated<T>(response: HttpResponse<T>, config: HttpRequestConfig): HttpResponse<T> {
+  if ((config.validateStatus ?? isSuccess)(response.status)) return response;
+  const error: HttpError<T> = {
+    code: "HTTP_ERROR",
+    message: `Request failed with status ${response.status} ${response.statusText}`.trimEnd(),
+    response
+  };
+  throw error;
+}
+
+async function fetchResponse<T>(method: string, config: HttpRequestConfig): Promise<HttpResponse<T>> {
   requireTauri(method);
   const { maxBytes } = config;
   if (maxBytes !== undefined && !(Number.isSafeInteger(maxBytes) && maxBytes >= 0)) {
@@ -107,6 +121,10 @@ async function send<T>(method: string, config: HttpRequestConfig): Promise<HttpR
     if (code) throw chainError(code, message.slice(code.length + 2));
     throw chainError("NATIVE_FAILURE", message);
   }
+}
+
+async function send<T>(method: string, config: HttpRequestConfig): Promise<HttpResponse<T>> {
+  return validated(await fetchResponse<T>(method, config), config);
 }
 
 type Config = Omit<HttpRequestConfig, "url" | "method" | "data">;
