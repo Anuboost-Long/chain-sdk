@@ -5,6 +5,7 @@
 
 pub mod agent_server;
 pub mod dev_launch;
+pub mod dev_trace;
 pub mod files;
 pub mod http;
 pub mod m4a;

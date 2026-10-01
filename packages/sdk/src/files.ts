@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke, isTauri } from "./native";
 
 import type { FilesApi, PickOptions, PickedFile, SaveOptions, SavedFile } from "./contracts/files";
 import { chainError } from "./errors";

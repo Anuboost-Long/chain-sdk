@@ -478,7 +478,8 @@ open a raw TCP socket, so this is immune to the "malicious webpage drives
 your local dev server" class of attack a WS-based bridge would have), and
 speaks newline-delimited JSON.
 
-The wire protocol has exactly two commands: `eval` and `rect`. `click`/
+The wire protocol has four commands: `eval`, `rect`, `focus` and
+`trace` (the last two below). `click`/
 `click-text`/`text`/`wait`/`type` are just JS snippets sent through
 `eval` (same idea as wrapping `page.evaluate()` in a Playwright driver).
 Tauri's `WebviewWindow::eval()` is fire-and-forget, so the requested code
@@ -545,7 +546,69 @@ inspect`** (Screen Recording for `screenshot`; Accessibility for
 `--screenshot <path> [--selector <sel>]` / `--drag <x1> <y1> <x2> <y2>
 [--selector <sel>]` run exactly one command, print the result, and exit
 with a real code — no REPL banner, safe to pipe/script. Omitting a flag
-falls through to the REPL, unchanged.
+falls through to the REPL, unchanged. So do `--focus` and
+`--trace start|dump|stop [--json]`, below.
+
+**Performance tracing — `--trace` and `--focus` (mneme request 28).**
+`chain inspect --trace start`, then `--trace dump` (or `--trace stop`,
+which also ends it) prints every native call made since start, grouped
+by command or SQL text (count, total/median/p95 JS time, native handler
+time, SQLite time, rows), frame gaps, and app/webview memory and CPU;
+`--json` prints the full report instead (`TraceReport` in
+`packages/cli/src/trace.ts`). It's assembled from three places:
+
+- **The SDK** (`packages/sdk/src/native.ts`) — every capability imports
+  `invoke` from there, not from `@tauri-apps/api/core`. While the page
+  has `window.__chainTrace` (only ever set by `--trace start`), each
+  call is recorded with its JS duration, argument and result sizes, and
+  a summary (SQL text, or `METHOD url`), and sent with a `chain-trace`
+  header carrying its id. Without a trace a call costs one property
+  read. Tauri's `__TAURI_INTERNALS__.invoke` is non-writable, so this
+  can't be done by wrapping it — and the SDK is the one place every
+  app call goes through anyway.
+- **The app** — `dev_inspector::traced()` wraps `generate_handler!`, so
+  every command runs inside `chain_core::dev_trace::command()`, which
+  records its handler time under the header's id; storage's
+  `query`/`execute` file each statement's SQLite time and row count
+  against the command running on that thread (`record_sql`). A sync
+  command's handler time is its whole native cost; an **async**
+  command (http, tts, models, speech, vision, files pick/save) returns
+  once its future is spawned, so its handler time is only dispatch —
+  read its JS time instead. Tauri has no public hook for when an async
+  command responds; its `tracing` feature has one, but it re-serializes
+  every request body on every call, trace or not, which would slow every
+  `chain dev`. A sampler thread records RSS and CPU every 250 ms for the
+  app process and the webview's: on macOS the WKWebView's WebContent
+  process (WebKit's private `_webProcessIdentifier`, dev-only), which
+  isn't the app's child; elsewhere the app's child processes (WebView2's).
+  All of it is `chain-core`'s `dev-trace` feature (with its optional
+  `sysinfo` dependency), which only `chain dev` passes, so none of it is
+  in a release binary.
+- **The page** — `--trace start` evals a recorder (`startScript` in
+  `trace.ts`) that counts `requestAnimationFrame` gaps over 25/33.4/
+  50 ms (25, not 16.7: WKWebView rounds `performance.now()` to whole
+  milliseconds, so on-time 60 Hz frames measure 16–17 ms — the first
+  run counted 690 of 1166 frames as "late"; for the same reason JS-side
+  call times are whole ms on macOS, native/SQLite times are precise), keeps gaps over 50 ms with the calls in flight during them,
+  logs visibility changes (and restarts gap timing after a hidden
+  stretch, since hidden pages don't render), and observes long tasks
+  where the engine has the API (WebView2 yes, WKWebView no — frame gaps
+  stand in for it there).
+
+`--focus` brings the window forward with Tauri's own
+`unminimize`/`show`/`set_focus`, so a hidden window renders again
+without the macOS Automation/Screen Recording prompts osascript or
+screencapture would raise. `--trace start` warns when the page is
+hidden.
+
+Verified on macOS in mneme's running window (1 October 2026): read-only
+navigation across courses, recordings and Recently deleted traced 44
+calls, all 44 joined to their native records with SQL time and rows
+(e.g. 0.26 ms handler, 0.05 ms SQLite for one grouped `SELECT`), the
+WebContent process was found and sampled, `--focus` raised the window
+with no prompt, and `dump` after `stop` reported no running trace.
+Verified on macOS only; the Windows paths (child-process webview
+sampling, WebView2 long tasks) compile from shared code but haven't run.
 
 **Non-goals:** Windows/Linux `screenshot`/`drag` — different native
 mechanisms entirely (WebView2 `CapturePreview` + `SendInput` on Windows;
@@ -797,7 +860,8 @@ build`): the engine against real SQLite. Add a case here for any new
   comment for why, plus one-shot flag dispatch (`--eval`/`--rect`/
   `--screenshot`/`--drag`) before the REPL is even set up. `js.*` builds
   the JS snippets for `click`/`click-text`/`text`/`wait`/`type`, all sent
-  through the `eval` wire command. `viewportRegion()` is the shared
+  through the `eval` wire command; `trace()` and `focusWindow()` back
+  `--trace`/`--focus`. `viewportRegion()` is the shared
   window/element → screen-coordinate math `screenshotRegion()` and
   `performDrag()` both build on — read its comment before changing either;
   the title-bar/traffic-light inset it corrects for is measured live, not
@@ -808,9 +872,17 @@ build`): the engine against real SQLite. Add a case here for any new
   eval-wrap-and-await-callback round trip, `rect`'s window-geometry
   query, the info-file writer (port/token/pid — pid is read by
   `inspect.ts`'s `drag` to activate the app window via `osascript` before
-  synthesizing input). Its own module doc explains what stays compiled
+  synthesizing input), `focus`, `trace`, and `traced()` — the command
+  handler wrapper behind `--trace`. Its own module doc explains what stays compiled
   unconditionally (a trivial command stub) versus what's feature-gated
   (everything real) and why.
+- `packages/cli/src/trace.ts` — `--trace`'s page scripts (frame
+  recorder, dump, stop) and `buildReport()`/`formatReport()`, which join
+  the page's and the app's records by call id. Tested by
+  `packages/cli/test/trace.test.mjs` (the scripts run in a stand-in page).
+- `crates/core/src/dev_trace.rs` — the app's side of `--trace`: command
+  records, `record_sql`, the process sampler. An empty `record_sql` stub
+  is all that exists without the `dev-trace` feature.
 - `packages/cli/src/scaffold.ts` — the shared source of truth for both
   `init` and `update`: `TRACKED_FILES` (every framework-owned path and
   how to regenerate it — the native-project entries are `.chain/native/...`,

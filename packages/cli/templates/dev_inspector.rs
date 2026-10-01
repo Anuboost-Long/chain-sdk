@@ -14,10 +14,11 @@
 //! Not a Chain SDK capability: nothing an app ever calls, only the
 //! developer/agent via `chain inspect`. See
 //! agent-docs/framework/command/README.md for the wire protocol —
-//! `eval` and `rect` are the only two wire commands; `chain inspect`'s
-//! `screenshot`/`drag` are Node-side (screencapture/cliclick), built on
-//! `rect`, deliberately not implemented here (see that README section for
-//! why). Non-goals: no auto-reconnect; token is a same-machine speed
+//! the wire commands are `eval`, `rect`, `focus` and `trace`; `chain
+//! inspect`'s `screenshot`/`drag` are Node-side (screencapture/cliclick),
+//! built on `rect`, deliberately not implemented here (see that README
+//! section for why). `trace` and `traced()` back `chain inspect --trace`,
+//! recording through chain_core::dev_trace. Non-goals: no auto-reconnect; token is a same-machine speed
 //! bump, not cryptographic auth.
 
 use std::sync::mpsc;
@@ -60,6 +61,8 @@ struct InspectRequest {
     token: String,
     cmd: String,
     code: Option<String>,
+    /// For `trace`: start, stop or dump.
+    action: Option<String>,
 }
 
 /// A same-machine speed bump, not cryptographic auth (see module docs) —
@@ -146,6 +149,8 @@ fn handle_connection(mut stream: TcpStream, app: tauri::AppHandle, token: String
         let reply = match req.cmd.as_str() {
             "eval" => run_eval(&app, &req.code.unwrap_or_default()),
             "rect" => run_rect(&app),
+            "focus" => run_focus(&app),
+            "trace" => run_trace(&app, req.action.as_deref().unwrap_or_default()),
             other => InspectorReply { ok: false, result: None, error: Some(format!("unknown cmd: {other}")) },
         };
         let _ = writeln!(
@@ -181,6 +186,81 @@ fn run_eval(app: &tauri::AppHandle, code: &str) -> InspectorReply {
         Ok(reply) => reply,
         Err(_) => InspectorReply { ok: false, result: None, error: Some("timed out waiting for result".into()) },
     }
+}
+
+/// Brings the window forward through Tauri's own window API, so a hidden
+/// window starts rendering frames again — no OS automation prompt, unlike
+/// osascript/screencapture.
+#[cfg(feature = "chain-dev-inspector")]
+fn run_focus(app: &tauri::AppHandle) -> InspectorReply {
+    let Some(window) = app.get_webview_window("main") else {
+        return InspectorReply { ok: false, result: None, error: Some("no main window".into()) };
+    };
+    let result = window.unminimize().and_then(|_| window.show()).and_then(|_| window.set_focus());
+    match result {
+        Ok(()) => InspectorReply { ok: true, result: Some("true".into()), error: None },
+        Err(e) => InspectorReply { ok: false, result: None, error: Some(e.to_string()) },
+    }
+}
+
+#[cfg(feature = "chain-dev-inspector")]
+fn run_trace(app: &tauri::AppHandle, action: &str) -> InspectorReply {
+    match action {
+        "start" => chain_core::dev_trace::start(webview_process_ids(app)),
+        "stop" => chain_core::dev_trace::stop(),
+        "dump" => {}
+        other => {
+            return InspectorReply { ok: false, result: None, error: Some(format!("unknown trace action: {other}")) }
+        }
+    }
+    InspectorReply { ok: true, result: Some(chain_core::dev_trace::dump().to_string()), error: None }
+}
+
+/// macOS runs the webview in a WebContent process that isn't this
+/// process's child, so it's looked up; elsewhere dev_trace finds the
+/// webview's processes as children.
+#[cfg(feature = "chain-dev-inspector")]
+fn webview_process_ids(app: &tauri::AppHandle) -> Vec<u32> {
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("main") {
+        let (tx, rx) = mpsc::channel();
+        let asked = window.with_webview(move |webview| {
+            let _ = tx.send(chain_core::dev_trace::webview_process_id(webview.inner()));
+        });
+        if asked.is_ok() {
+            return rx.recv_timeout(Duration::from_secs(2)).ok().flatten().into_iter().collect();
+        }
+    }
+    let _ = app;
+    Vec::new()
+}
+
+/// Wraps the app's command handler so `chain inspect --trace` sees every
+/// command: its name, the SDK's call id (its `chain-trace` header), and
+/// handler time.
+#[cfg(feature = "chain-dev-inspector")]
+pub fn traced<R: tauri::Runtime>(
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let cmd = invoke.message.command().to_string();
+        if cmd == "__chain_inspector_report" {
+            return handler(invoke);
+        }
+        let id = invoke
+            .message
+            .headers()
+            .get("chain-trace")
+            .and_then(|id| id.to_str().ok()?.parse().ok());
+        chain_core::dev_trace::command(&cmd, id, || handler(invoke))
+    }
+}
+
+#[cfg(not(feature = "chain-dev-inspector"))]
+pub fn traced<R: tauri::Runtime>(
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    handler
 }
 
 /// Physical-pixel window/webview geometry — `chain inspect screenshot`/

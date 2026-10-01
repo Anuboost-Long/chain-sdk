@@ -989,7 +989,7 @@ pub fn run() {
             dev_inspector::start(_app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(dev_inspector::traced(tauri::generate_handler![
             greet,
             get_platform_info,
             storage_migrate,
@@ -1028,7 +1028,7 @@ pub fn run() {
             tts_compile,
             tts_cancel,
             __chain_inspector_report
-        ])
+        ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

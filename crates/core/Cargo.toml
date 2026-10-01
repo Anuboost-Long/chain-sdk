@@ -38,6 +38,9 @@ tar = "0.4"
 bzip2 = "0.5"
 flate2 = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# dev_trace: app/webview process memory and CPU for `chain inspect --trace`.
+# Only with the dev-trace feature, which only `chain dev` enables.
+sysinfo = { version = "0.37", optional = true, default-features = false, features = ["system"] }
 
 [features]
 # Text-to-speech. Links sherpa-onnx's TTS-enabled build, which includes
@@ -45,6 +48,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # "chain": { "gpl": true } (chain dev/build then pass chain-core/tts).
 # See agent-docs/capabilities/models/research/LICENSING.md.
 tts = []
+# `chain inspect --trace` (src/dev_trace.rs). Passed only by `chain dev`,
+# never `chain build`.
+dev-trace = ["dep:sysinfo"]
 
 [build-dependencies]
 serde_json = "1"

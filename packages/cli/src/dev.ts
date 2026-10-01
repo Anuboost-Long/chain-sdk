@@ -117,9 +117,10 @@ export async function dev(args: string[]): Promise<void> {
     const gen = ++generation;
     // Re-read on every (re)start, so an edited declaration takes effect on "r".
     syncPermissionsOrExit(cwd);
-    // --features chain-dev-inspector powers `chain inspect` — chain build
-    // never passes it, so it never ships in a release binary.
-    const features = ["chain-dev-inspector", ...chainCoreFeaturesOrExit(cwd)].join(",");
+    // --features chain-dev-inspector powers `chain inspect` and
+    // chain-core/dev-trace its --trace — chain build passes neither, so
+    // they never ship in a release binary.
+    const features = ["chain-dev-inspector", "chain-core/dev-trace", ...chainCoreFeaturesOrExit(cwd)].join(",");
     child = spawn(tauriBin, ["dev", "--features", features, ...args], {
       cwd,
       // A developer's own CARGO_TARGET_DIR still wins.

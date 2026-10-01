@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "./native";
 
 import type { StorageApi, StorageScope, Migration, ExecuteResult } from "./contracts/storage";
 import { chainError } from "./errors";

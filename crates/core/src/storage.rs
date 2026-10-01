@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Instant;
 
 #[derive(Debug)]
 pub struct StorageError(pub String);
@@ -183,6 +184,7 @@ impl Database {
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             sql_params.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
 
+        let started = Instant::now();
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| {
                 let mut obj = serde_json::Map::new();
@@ -194,7 +196,9 @@ impl Database {
             })
             .map_err(|e| StorageError(e.to_string()))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| StorageError(e.to_string()))
+        let rows = rows.collect::<Result<Vec<_>, _>>().map_err(|e| StorageError(e.to_string()))?;
+        crate::dev_trace::record_sql(sql, started, rows.len());
+        Ok(rows)
     }
 
     pub fn execute(&self, transaction: Option<u64>, sql: &str, params: &[JsonValue]) -> Result<ExecuteResult, StorageError> {
@@ -203,9 +207,11 @@ impl Database {
         let sql_params: Vec<SqlValue> = params.iter().map(json_to_sql).collect();
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             sql_params.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let started = Instant::now();
         let rows_affected = conn
             .execute(sql, param_refs.as_slice())
             .map_err(|e| StorageError(e.to_string()))?;
+        crate::dev_trace::record_sql(sql, started, rows_affected);
         Ok(ExecuteResult {
             rows_affected,
             last_insert_id: conn.last_insert_rowid(),

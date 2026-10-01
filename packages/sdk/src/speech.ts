@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "./native";
 import { listen } from "@tauri-apps/api/event";
 
 import type { SpeechApi, Transcript, TranscribeOptions } from "./contracts/speech";
