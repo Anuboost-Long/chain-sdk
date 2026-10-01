@@ -795,6 +795,20 @@ fn tts_cancel() {
     chain_core::sherpa::tts::cancel_compile();
 }
 
+#[tauri::command]
+fn tts_set_idle_unload(ms: u64) -> Result<(), String> {
+    chain_core::sherpa::tts::set_idle_unload(ms).map_err(to_tts_command_error)
+}
+
+// Waits for a synthesize call in progress to finish, so not on the main thread.
+#[tauri::command]
+async fn tts_unload() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::sherpa::tts::unload)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_tts_command_error)
+}
+
 // Bridges the speech capability contract (capabilities/speech in
 // chain-sdk). The audio is a `desktop.files` reference resolved to its
 // path here — an hour of audio never crosses IPC. Progress goes out as
@@ -1027,6 +1041,8 @@ pub fn run() {
             tts_synthesize,
             tts_compile,
             tts_cancel,
+            tts_set_idle_unload,
+            tts_unload,
             __chain_inspector_report
         ]))
         .run(tauri::generate_context!())

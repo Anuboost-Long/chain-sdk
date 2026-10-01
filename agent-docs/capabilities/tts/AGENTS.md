@@ -44,6 +44,22 @@ Requested by mneme (request 21, part 2).
       don't drift). Cancel mid-compile → `CANCELLED` with no file and
       no temp left; a second concurrent call → `UNAVAILABLE`;
       `files.delete` removes the result. Progress reaches 1.
+- [x] Idle unload / `unload()` (mneme request 29, 2026-10-01), macOS
+      arm64, in mneme's running window with Kokoro, measured with
+      `vmmap --summary`'s physical footprint (RSS overstates it on macOS:
+      freed-but-reusable pages still count). Baseline 37 MB, loaded
+      637 MB. A 3 s idle timeout didn't free at 1.5 s idle and had by
+      4.5 s; lowering 60 s → 1 s while already 2 s idle freed at once;
+      `unload()` twice is a no-op the second time; `-5` →
+      `INVALID_ARGUMENT`. That the engine really is gone was confirmed by
+      timing: the next `voices()` took 3.85 s (a load) against 6 ms when
+      loaded. Memory returned varies: without
+      `malloc_zone_pressure_relief` it came back over 5–10 s; with it,
+      one `unload()` went 637 → 50 MB by the time it resolved, while
+      other cycles kept ~330 MB reserved, which the next load reused
+      (loaded footprint 475 MB, not 637) — no growth across cycles.
+- [ ] Idle unload on Windows: same code, but no `return_freed_memory`
+      equivalent (the Windows heap decommits on its own schedule); unrun.
 - [ ] `compile` on Windows: `M4aWriter` is `Unsupported` there — see
       research/WINDOWS.md for the Media Foundation plan.
 - [ ] Windows: never built.

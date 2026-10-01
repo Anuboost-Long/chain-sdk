@@ -93,5 +93,19 @@ export const tts: TtsApi = {
   async cancel(): Promise<void> {
     requireTauri("cancel");
     return call<void>("tts_cancel");
+  },
+
+  async setIdleUnload(ms: number | null): Promise<void> {
+    requireTauri("setIdleUnload");
+    const value = ms ?? 0;
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw chainError("INVALID_ARGUMENT", `the idle time must be a whole number of milliseconds ≥ 0, got ${ms}`);
+    }
+    return call<void>("tts_set_idle_unload", { ms: value });
+  },
+
+  async unload(): Promise<void> {
+    requireTauri("unload");
+    return call<void>("tts_unload");
   }
 };

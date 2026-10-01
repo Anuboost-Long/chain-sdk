@@ -36,7 +36,8 @@ Speaks `text` with speaker `voice` (default 0) at `speed` (0.25–4, default
    `files.delete()` when done — the app owns it like any stored file.
 
 - One model stays loaded between calls (switching models reloads), so
-  paragraph-by-paragraph synthesis doesn't pay the load cost each time.
+  paragraph-by-paragraph synthesis doesn't pay the load cost each time —
+  until it's unloaded (see `setIdleUnload` below).
 - Calls run one at a time; a second call waits for the first.
 - No streaming: the whole WAV exists when the promise resolves. Apps split
   long text into paragraphs themselves.
@@ -81,6 +82,39 @@ cancelled or fails, the temporary file is removed.
   segment being spoken finishes. A no-op when no compile is running.
 - About 0.5 MB per minute (AAC, mono, 64 kbps), against 2.9 MB for WAV.
 
+## Freeing the model — `setIdleUnload(ms)` and `unload()` (mneme request 29)
+
+```
+setIdleUnload(ms: number | null): Promise<void>
+unload(): Promise<void>
+```
+
+A loaded model holds hundreds of MB (about 600 MB for Kokoro), so an app
+that warms one up ahead of use can let it go again:
+
+- `setIdleUnload(ms)` frees the loaded model once no call has used it
+  for `ms` milliseconds. Call it whenever: a new value applies at once,
+  still counted from the last call (so lowering it below the time
+  already idle frees the model right away). `0` or `null` means never —
+  the default. It lasts until the app quits, across webview reloads.
+  `ms` must be a whole number ≥ 0 (else `INVALID_ARGUMENT`).
+- `unload()` frees it and resolves once it's freed; a no-op when nothing
+  is loaded.
+- Neither ever interrupts a call. A `voices`/`synthesize` call in
+  progress keeps the model loaded until it finishes, and a running
+  `compile` counts as in use from start to end — `unload()` waits for
+  either to finish first. The idle time counts from when the last call
+  finished.
+- The next call after an unload loads the model again, as the first one
+  did (about a second for Kokoro).
+- "Freed" means the engine is destroyed. How much of its memory the OS
+  gets back right away is up to the system allocator: on macOS Chain asks
+  for it immediately (`malloc_zone_pressure_relief`), and anywhere from
+  all of it to about half comes back; the rest stays reserved in the
+  process and is reused by the next load, so repeated load/unload cycles
+  don't grow memory.
+- The timer runs natively, so it sees every call, from any window.
+
 ## `TtsModelConfig`
 
 File and folder names relative to the model, from the app's catalog:
@@ -99,7 +133,8 @@ File and folder names relative to the model, from the app's catalog:
 - `NOT_FOUND` — the model, or a named file or folder in it, isn't installed.
 - `INVALID_ARGUMENT` — empty text (for `compile`: no segments, or a blank
   one, named by its index), a voice id the model doesn't have, a speed
-  outside 0.25–4, or a name that isn't a plain relative path.
+  outside 0.25–4, a name that isn't a plain relative path, or an
+  `setIdleUnload` time that isn't a whole number ≥ 0.
 - `UNAVAILABLE` — `compile` while another compile is running.
 - `CANCELLED` — `compile` stopped by `cancel()`.
 - `NATIVE_FAILURE` — the model failed to load (files don't match `type`)

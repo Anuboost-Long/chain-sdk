@@ -89,4 +89,12 @@ export interface TtsApi {
   ): Promise<CompiledAudio>;
   /** Stops the running compile, which rejects `CANCELLED`. No-op when idle. */
   cancel(): Promise<void>;
+  /**
+   * Frees the loaded model once no call has used it for `ms` milliseconds.
+   * Callable any time; a new value applies at once. `0` or `null`, the
+   * default, keeps it loaded. Lasts until the app quits.
+   */
+  setIdleUnload(ms: number | null): Promise<void>;
+  /** Frees the loaded model, after any call in progress, and resolves once it's freed. */
+  unload(): Promise<void>;
 }

@@ -25,6 +25,16 @@ Timings are summed from sample counts. Only on success does
 failure the temp file is removed. Progress goes out as
 `chain://tts-progress`; `tts_cancel` sets a flag checked between segments.
 
+The loaded model (about 600 MB for Kokoro) stays in `LOADED` until it's
+freed. `desktop.tts.setIdleUnload(ms)` → `set_idle_unload` starts one
+reaper thread that frees it once no call has finished for `ms`: every
+`with_engine` call and the end of a compile stamp `LAST_USED`; the
+reaper only frees when it can take `LOADED` without waiting (a call
+holding it is in use) and no compile is running. A new setting wakes it
+through a condvar, so it applies at once. `desktop.tts.unload()` →
+`unload` waits out a running compile, then takes `LOADED` (waiting for a
+call in progress) and frees it (mneme request 29).
+
 ## How to use it
 
 ```json
@@ -59,17 +69,22 @@ const book = await desktop.tts.compile(sentences, { modelId, config: kokoro, voi
 audio.src = await desktop.files.url(book.file);
 audio.ontimeupdate = () => highlight(book.segments.findIndex((s) => audio.currentTime < s.end));
 // "Remove audio": desktop.files.delete(book.file)
+
+// Memory: free the model after a minute without use (any time; 0/null = never),
+// or right away, e.g. when the user turns read-aloud off.
+await desktop.tts.setIdleUnload(60_000);
+await desktop.tts.unload();
 ```
 
 ## Files to check
 
 - `capabilities/tts/contract.ts` — TS types.
-- `crates/core/src/sherpa/tts.rs` — configs, voice naming, WAV writer, engine cache, `compile` + timings (+ tests incl. layout).
+- `crates/core/src/sherpa/tts.rs` — configs, voice naming, WAV writer, engine cache and its idle reaper, `compile` + timings (+ tests incl. layout).
 - `crates/core/src/m4a.rs` — the AAC writer (macOS ExtAudioFile; `Unsupported` elsewhere) + test.
 - `crates/core/src/files.rs` — `Files::adopt`, how a finished compile becomes a reference.
 - `crates/core/src/sherpa/tts_ffi.rs` — C bindings (feature-gated).
 - `crates/core/build.rs` — TTS archive table and extra libs.
 - `packages/cli/src/features.ts` — the `chain.gpl` opt-in.
-- `packages/cli/templates/lib.rs` — `tts_voices`/`tts_synthesize`/`tts_compile`/`tts_cancel`.
+- `packages/cli/templates/lib.rs` — `tts_voices`/`tts_synthesize`/`tts_compile`/`tts_cancel`/`tts_set_idle_unload`/`tts_unload`.
 - `packages/sdk/src/tts.ts` — SDK wrapper.
 - `agent-docs/capabilities/models/research/LICENSING.md` — what the opt-in links.

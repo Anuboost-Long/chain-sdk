@@ -202,8 +202,9 @@ pub fn wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 #[cfg(all(feature = "tts", not(chain_no_sherpa)))]
 mod engine {
     use std::ffi::CString;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Condvar, Mutex};
+    use std::time::{Duration, Instant};
 
     use super::super::tts_ffi::*;
     use super::*;
@@ -312,7 +313,112 @@ mod engine {
             *loaded = None; // free the old model before loading the next
             *loaded = Some((key, create(config)?));
         }
-        f(&loaded.as_ref().expect("just loaded").1)
+        let result = f(&loaded.as_ref().expect("just loaded").1);
+        mark_used();
+        result
+    }
+
+    // Freeing the loaded model when idle — CONTRACT.md's "Freeing the
+    // model". A model is in use while a call holds LOADED, and for the
+    // whole of a compile (which only holds it per segment).
+
+    /// 0 means never.
+    static IDLE_UNLOAD_MS: AtomicU64 = AtomicU64::new(0);
+    /// When the last call finished; None once the model is freed.
+    static LAST_USED: Mutex<Option<Instant>> = Mutex::new(None);
+    static REAPER_RUNNING: AtomicBool = AtomicBool::new(false);
+    /// Bumped by every set_idle_unload, under SETTING, so the reaper never
+    /// sleeps through a change: it applies at once.
+    static SETTING: Mutex<u64> = Mutex::new(0);
+    static SETTING_CHANGED: Condvar = Condvar::new();
+
+    fn mark_used() {
+        *LAST_USED.lock().expect("tts mutex poisoned") = Some(Instant::now());
+    }
+
+    fn free(loaded: &mut Option<(String, Tts)>) {
+        let was_loaded = loaded.take().is_some();
+        *LAST_USED.lock().expect("tts mutex poisoned") = None;
+        if was_loaded {
+            return_freed_memory();
+        }
+    }
+
+    /// macOS's allocator keeps a freed model's ~600 MB for seconds before
+    /// handing it back to the system; ask for it now, so unload() means freed.
+    #[cfg(target_os = "macos")]
+    fn return_freed_memory() {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn return_freed_memory() {}
+
+    pub fn set_idle_unload(ms: u64) -> Result<(), TtsError> {
+        let mut generation = SETTING.lock().expect("tts mutex poisoned");
+        IDLE_UNLOAD_MS.store(ms, Ordering::SeqCst);
+        *generation += 1;
+        SETTING_CHANGED.notify_all();
+        drop(generation);
+        if ms > 0 && !REAPER_RUNNING.swap(true, Ordering::SeqCst) {
+            std::thread::spawn(reap_idle);
+        }
+        Ok(())
+    }
+
+    /// Frees the model, after a call or compile in progress finishes, and
+    /// returns once it's freed.
+    pub fn unload() -> Result<(), TtsError> {
+        while COMPILING.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        free(&mut LOADED.lock().expect("tts mutex poisoned"));
+        Ok(())
+    }
+
+    /// Sleeps `wait`, or until set_idle_unload changes the setting.
+    fn sleep_unless_changed(seen: u64, wait: Duration) {
+        let generation = SETTING.lock().expect("tts mutex poisoned");
+        if *generation == seen {
+            let _ = SETTING_CHANGED.wait_timeout(generation, wait);
+        }
+    }
+
+    /// Wakes when the model would have been idle long enough. Never waits
+    /// on LOADED: a call holding it is in use, so it just checks again.
+    fn reap_idle() {
+        loop {
+            let seen = *SETTING.lock().expect("tts mutex poisoned");
+            let ms = IDLE_UNLOAD_MS.load(Ordering::SeqCst);
+            if ms == 0 {
+                REAPER_RUNNING.store(false, Ordering::SeqCst);
+                // set_idle_unload may have turned it back on before the store above.
+                if IDLE_UNLOAD_MS.load(Ordering::SeqCst) == 0 || REAPER_RUNNING.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                continue;
+            }
+            let timeout = Duration::from_millis(ms);
+            let mut wait = timeout;
+            if !COMPILING.load(Ordering::SeqCst) {
+                if let Ok(mut loaded) = LOADED.try_lock() {
+                    let idle = LAST_USED.lock().expect("tts mutex poisoned").map(|at| at.elapsed());
+                    match idle {
+                        Some(idle) if idle >= timeout => free(&mut loaded),
+                        Some(idle) => wait = timeout - idle,
+                        None => {}
+                    }
+                } else {
+                    wait = Duration::from_millis(100);
+                }
+            } else {
+                wait = Duration::from_millis(100).max(timeout / 10);
+            }
+            sleep_unless_changed(seen, wait.max(Duration::from_millis(10)));
+        }
     }
 
     pub fn voices(config: &TtsModelConfig) -> Result<Vec<Voice>, TtsError> {
@@ -373,6 +479,7 @@ mod engine {
 
     impl Drop for CompilingGuard {
         fn drop(&mut self) {
+            mark_used();
             COMPILING.store(false, Ordering::SeqCst);
         }
     }
@@ -444,7 +551,7 @@ mod engine {
 }
 
 #[cfg(all(feature = "tts", not(chain_no_sherpa)))]
-pub use engine::{cancel_compile, compile, synthesize, voices};
+pub use engine::{cancel_compile, compile, set_idle_unload, synthesize, unload, voices};
 
 #[cfg(not(all(feature = "tts", not(chain_no_sherpa))))]
 fn not_built() -> TtsError {
@@ -478,6 +585,16 @@ pub fn compile(
 
 #[cfg(not(all(feature = "tts", not(chain_no_sherpa))))]
 pub fn cancel_compile() {}
+
+#[cfg(not(all(feature = "tts", not(chain_no_sherpa))))]
+pub fn set_idle_unload(_ms: u64) -> Result<(), TtsError> {
+    Err(not_built())
+}
+
+#[cfg(not(all(feature = "tts", not(chain_no_sherpa))))]
+pub fn unload() -> Result<(), TtsError> {
+    Err(not_built())
+}
 
 #[cfg(test)]
 mod tests {
