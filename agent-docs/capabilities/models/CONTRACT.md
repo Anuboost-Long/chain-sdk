@@ -10,7 +10,8 @@ the catalog (URLs, hashes, which files are which); Chain installs only the
 manifest it's handed.
 
 Engines using models today: `desktop.speech.transcribe(…, { engine })`
-(sherpa-onnx ASR). TTS is not built yet (see Non-goals).
+(sherpa-onnx ASR), `desktop.tts`, and `desktop.embeddings` (ONNX
+sentence-embedding models with a Hugging Face tokenizer).
 
 ## `desktop.models.install(manifest, onProgress?)`
 

@@ -1,0 +1,16 @@
+{
+  "name": "embeddings",
+  "description": "On-device sentence embeddings from downloaded ONNX models and Hugging Face tokenizers.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/embeddings/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

@@ -8,6 +8,7 @@ pub mod audio_recorder;
 pub mod browser;
 pub mod dev_launch;
 pub mod dev_trace;
+pub mod embeddings;
 pub mod files;
 pub mod http;
 pub mod m4a;

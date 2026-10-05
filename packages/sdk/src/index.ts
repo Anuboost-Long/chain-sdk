@@ -1,6 +1,7 @@
 import { agentServer } from "./agent-server";
 import { audioRecorder } from "./audio-recorder";
 import { browser } from "./browser";
+import { embeddings } from "./embeddings";
 import { files } from "./files";
 import { http } from "./http";
 import { models } from "./models";
@@ -27,7 +28,8 @@ export const desktop = {
   models,
   tts,
   audioRecorder,
-  browser
+  browser,
+  embeddings
 };
 
 export { sql } from "./storage-table";
@@ -136,3 +138,16 @@ export type {
   BrowserSessionOptions,
   BrowserUnsubscribe
 } from "./contracts/browser";
+export type {
+  EmbeddingsApi,
+  EmbeddingsAvailability,
+  EmbeddingModel,
+  EmbeddingModelConfig,
+  EmbeddingPooling,
+  EmbeddingInput,
+  EmbedOptions,
+  Embeddings,
+  EmbeddedText,
+  CountTokensOptions,
+  TokenCounts
+} from "./contracts/embeddings";

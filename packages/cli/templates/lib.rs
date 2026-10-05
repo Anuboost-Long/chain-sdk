@@ -822,6 +822,91 @@ async fn tts_unload() -> Result<(), String> {
         .map_err(to_tts_command_error)
 }
 
+// Bridges the embeddings capability contract (capabilities/embeddings in
+// chain-sdk). Vectors go back as one raw buffer (chain_core::embeddings::
+// Embedded::to_bytes), never a JSON number array; the caller's `id` lets
+// embeddings_cancel stop that call alone.
+fn to_embeddings_command_error(e: chain_core::embeddings::EmbeddingsError) -> String {
+    use chain_core::embeddings::EmbeddingsError::*;
+    match e {
+        InvalidArgument(m) | InvalidModel(m) => format!("INVALID_ARGUMENT: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        OutOfMemory(m) => format!("TOO_LARGE: {m}"),
+        Cancelled => "CANCELLED: the embedding was cancelled".to_string(),
+        Other(m) => m,
+    }
+}
+
+fn resolve_embedding_model(
+    app: &tauri::AppHandle,
+    state: &ModelsState,
+    model_id: &str,
+    mut config: chain_core::embeddings::EmbeddingModelConfig,
+) -> Result<chain_core::embeddings::EmbeddingModelConfig, String> {
+    let models = models_of(app, state)?;
+    let tokenizer_model_id = config.tokenizer_model_id.as_deref().unwrap_or(model_id);
+    config.tokenizer = models.resolve(tokenizer_model_id, &config.tokenizer).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    config.model = models.resolve(model_id, &config.model).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    Ok(config)
+}
+
+#[tauri::command]
+fn embeddings_availability() -> chain_core::embeddings::Availability {
+    chain_core::embeddings::availability()
+}
+
+#[tauri::command]
+async fn embeddings_embed(
+    app: tauri::AppHandle,
+    models_state: tauri::State<'_, ModelsState>,
+    id: String,
+    texts: Vec<String>,
+    model_id: String,
+    config: chain_core::embeddings::EmbeddingModelConfig,
+    input: chain_core::embeddings::Input,
+    batch_size: Option<usize>,
+) -> Result<tauri::ipc::Response, String> {
+    let config = resolve_embedding_model(&app, &models_state, &model_id, config)?;
+    tauri::async_runtime::spawn_blocking(move || chain_core::embeddings::embed(&id, &texts, &config, input, batch_size))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|embedded| tauri::ipc::Response::new(embedded.to_bytes()))
+        .map_err(to_embeddings_command_error)
+}
+
+#[tauri::command]
+async fn embeddings_count_tokens(
+    app: tauri::AppHandle,
+    models_state: tauri::State<'_, ModelsState>,
+    texts: Vec<String>,
+    model_id: String,
+    mut config: chain_core::embeddings::EmbeddingModelConfig,
+    input: Option<chain_core::embeddings::Input>,
+) -> Result<chain_core::embeddings::TokenCounts, String> {
+    let tokenizer_model_id = config.tokenizer_model_id.clone().unwrap_or(model_id);
+    config.tokenizer = models_of(&app, &models_state)?
+        .resolve(&tokenizer_model_id, &config.tokenizer)
+        .map_err(to_models_command_error)?
+        .to_string_lossy()
+        .into_owned();
+    tauri::async_runtime::spawn_blocking(move || chain_core::embeddings::count_tokens(&texts, &config, input))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_embeddings_command_error)
+}
+
+#[tauri::command]
+fn embeddings_cancel(id: String) {
+    chain_core::embeddings::cancel(&id);
+}
+
+// Waits for the batch in progress, so not on the main thread.
+#[tauri::command]
+async fn embeddings_unload() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::embeddings::unload).await.map_err(|e| e.to_string())
+}
+
 // Bridges the audio-recorder capability contract (capabilities/audio-recorder
 // in chain-sdk). Levels go out as `chain://audio-recorder-level` tagged
 // with the caller's `id`; the finished temp file moves into files on stop.
@@ -1169,6 +1254,11 @@ pub fn run() {
             tts_cancel,
             tts_set_idle_unload,
             tts_unload,
+            embeddings_availability,
+            embeddings_embed,
+            embeddings_count_tokens,
+            embeddings_cancel,
+            embeddings_unload,
             audio_recorder_availability,
             audio_recorder_microphones,
             audio_recorder_start,

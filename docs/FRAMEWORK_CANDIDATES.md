@@ -374,3 +374,27 @@ never run — checklist in research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
+
+## Embeddings
+
+Used by:
+mneme (request 37 — search by meaning: index each page's passages on the
+device, "By meaning" results in ⌘P, a `search_by_meaning` tool for Ask)
+
+Generalizable:
+Yes — any app with semantic search, deduplication or clustering over the
+user's own text, without sending it anywhere
+
+Contract:
+Draft (`agent-docs/capabilities/embeddings/CONTRACT.md`, `capabilities/embeddings/contract.ts`)
+
+macOS:
+Implemented on the ONNX Runtime 1.28.2 inside sherpa-onnx's static
+archive (C API, no second runtime) and the `tokenizers` crate; verified
+against reference vectors and end to end in the playground
+
+Windows:
+Same code and runtime; never built — checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)

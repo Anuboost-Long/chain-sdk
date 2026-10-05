@@ -19,6 +19,7 @@ to see what actually exists vs. what's just planned.
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
+| Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -181,3 +182,13 @@ popup messaging its opener and closing itself, app button presses (and a
 forged press from the page refused), sign out open and closed. Windows is
 ⚠: the same Tauri code compiles for it but has never run there
 (`agent-docs/capabilities/browser/research/WINDOWS.md` has the checklist).
+
+`embeddings` (request 37 — sentence vectors for search by meaning, from a
+downloaded ONNX model and its Hugging Face tokenizer, on the ONNX Runtime
+sherpa-onnx already links) is verified on macOS arm64: against Python
+onnxruntime reference vectors for bge-small-en-v1.5 and
+multilingual-e5-small in `cargo test`, and end to end in
+`apps/playground` with both models installed through `desktop.models`
+(every error code, cancel mid-run, unload). Windows is the same Rust on
+the same runtime but has never been built there
+(`agent-docs/capabilities/embeddings/research/WINDOWS.md`).

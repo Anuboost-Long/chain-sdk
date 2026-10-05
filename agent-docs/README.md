@@ -53,3 +53,4 @@ feature added to this SDK.
 | Tts capability           | [`capabilities/tts/`](capabilities/tts/README.md)                       | `desktop.tts` — Kokoro/Piper voices via sherpa-onnx; GPL-3.0 opt-in per app (`chain.gpl`)                |
 | AudioRecorder capability | [`capabilities/audio-recorder/`](capabilities/audio-recorder/README.md) | `desktop.audioRecorder` — record the microphone, the computer's own audio, or both mixed, to an AAC file |
 | Browser capability       | [`capabilities/browser/`](capabilities/browser/README.md)               | `desktop.browser` — a separate signed-in browser window: own session, toolbar buttons, read the page, fetch with the session |
+| Embeddings capability    | [`capabilities/embeddings/`](capabilities/embeddings/README.md)         | `desktop.embeddings` — on-device sentence embeddings from downloaded ONNX models + Hugging Face tokenizers |
