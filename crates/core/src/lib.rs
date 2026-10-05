@@ -5,6 +5,7 @@
 
 pub mod agent_server;
 pub mod audio_recorder;
+pub mod browser;
 pub mod dev_launch;
 pub mod dev_trace;
 pub mod files;

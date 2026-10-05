@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager};
 
+mod browser;
 mod dev_inspector;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -86,6 +87,18 @@ fn storage_commit(app: tauri::AppHandle, state: tauri::State<StorageState>, tran
 #[tauri::command]
 fn storage_rollback(app: tauri::AppHandle, state: tauri::State<StorageState>, transaction: u64) -> Result<(), String> {
     with_storage(&app, &state, |db| db.rollback(transaction))
+}
+
+// A reloaded or navigated page can't finish what the previous one started.
+// The browser capability's webviews are other sites, not the app.
+fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
+    if webview.label().starts_with(chain_core::browser::LABEL_PREFIX) {
+        return;
+    }
+    rollback_abandoned_transaction(webview, payload);
+    if payload.event() == tauri::webview::PageLoadEvent::Started {
+        chain_core::audio_recorder::cancel();
+    }
 }
 
 // A page that reloads mid-transaction can never commit or roll it back.
@@ -1103,11 +1116,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
-        .on_page_load(rollback_abandoned_transaction)
+        .on_page_load(release_abandoned_work)
         .manage(FilesState(Mutex::new(None)))
         .manage(AgentServerState::default())
         .manage(ProcessRunnerState::default())
         .manage(ModelsState::default())
+        .manage(browser::BrowserState::default())
+        .register_uri_scheme_protocol("chain-browser", browser::protocol)
         .setup(|_app| {
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
@@ -1161,6 +1176,14 @@ pub fn run() {
             audio_recorder_resume,
             audio_recorder_stop,
             audio_recorder_cancel,
+            browser::browser_availability,
+            browser::browser_open,
+            browser::browser_close,
+            browser::browser_set_buttons,
+            browser::browser_current,
+            browser::browser_read,
+            browser::browser_fetch,
+            browser::browser_clear_session,
             __chain_inspector_report
         ]))
         .run(tauri::generate_context!())

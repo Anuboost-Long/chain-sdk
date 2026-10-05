@@ -349,3 +349,28 @@ Not started — WASAPI loopback plan in research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
+
+## Browser
+
+Used by:
+mneme (request 36 — sign in to a school LMS behind single sign-on and
+import the page the student is on, with its login-protected pictures)
+
+Generalizable:
+Yes — any app that reads content behind a login the user holds (LMS,
+intranets, research databases) without handling credentials
+
+Contract:
+Draft (`agent-docs/capabilities/browser/CONTRACT.md`, `capabilities/browser/contract.ts`)
+
+macOS:
+Implemented on Tauri's multi-webview window (`unstable` feature) with a
+`WKWebsiteDataStore(forIdentifier:)` per session, macOS 14+; verified in
+the playground against a local test site (see CAPABILITY_MATRIX.md)
+
+Windows:
+Same code through WebView2 (a user-data folder per session); compiles,
+never run — checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)

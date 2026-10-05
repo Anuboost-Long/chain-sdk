@@ -75,9 +75,12 @@ objc2-image-io = "0.3"
 objc2-speech = "0.3"
 objc2-avf-audio = "0.3"
 block2 = "0.6"
-# files::open/reveal: NSWorkspace. Same version Tauri already builds, so
-# nothing new ships.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+# files::open/reveal: NSWorkspace; browser: the window's title bar height.
+# Same version Tauri already builds, so nothing new ships.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSResponder", "NSView", "NSWindow"] }
+# browser: clearing a session's WKWebsiteDataStore, the page's
+# back/forward state, and closing popups that call window.close(). Same version wry already builds.
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "WKNavigation", "WKUIDelegate"] }
 # dev_launch: posix_spawn + dlsym for relaunching a `chain dev` binary
 # responsible for its own permission prompts.
 libc = "0.2"

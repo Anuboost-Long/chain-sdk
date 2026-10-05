@@ -1,5 +1,6 @@
 import { agentServer } from "./agent-server";
 import { audioRecorder } from "./audio-recorder";
+import { browser } from "./browser";
 import { files } from "./files";
 import { http } from "./http";
 import { models } from "./models";
@@ -25,7 +26,8 @@ export const desktop = {
   speech,
   models,
   tts,
-  audioRecorder
+  audioRecorder,
+  browser
 };
 
 export { sql } from "./storage-table";
@@ -118,3 +120,19 @@ export type {
   MicrophoneChange,
   RecordingStarted
 } from "./contracts/audio-recorder";
+export type {
+  BrowserApi,
+  BrowserAvailability,
+  BrowserButton,
+  BrowserButtonPress,
+  BrowserClosed,
+  BrowserFetchError,
+  BrowserFetchOptions,
+  BrowserFetchResponse,
+  BrowserFrame,
+  BrowserOpenOptions,
+  BrowserPage,
+  BrowserPageContent,
+  BrowserSessionOptions,
+  BrowserUnsubscribe
+} from "./contracts/browser";

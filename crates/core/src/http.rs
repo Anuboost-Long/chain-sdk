@@ -109,14 +109,25 @@ pub async fn request(request: HttpRequest) -> Result<HttpResponse, HttpError> {
 /// JSON number array. Stops with `TooLarge` past `max_bytes`.
 pub async fn request_bytes(request: HttpRequest) -> Result<Vec<u8>, HttpError> {
     let max_bytes = request.max_bytes;
-    let (head, mut response) = send(request).await?;
+    let (head, response) = send(request).await?;
+    frame(&head, response, max_bytes).await
+}
+
+/// `head` as JSON behind its big-endian u32 length, then the body, read up
+/// to `max_bytes` — `request_bytes`'s format, shared with the browser's
+/// session fetch.
+pub(crate) async fn frame(
+    head: &impl Serialize,
+    mut response: reqwest::Response,
+    max_bytes: Option<u64>,
+) -> Result<Vec<u8>, HttpError> {
     let too_large = |max: u64| HttpError::TooLarge(format!("the response is larger than maxBytes ({max} bytes)"));
     if let (Some(max), Some(length)) = (max_bytes, response.content_length()) {
         if length > max {
             return Err(too_large(max));
         }
     }
-    let head = serde_json::to_vec(&head).map_err(|e| HttpError::Other(e.to_string()))?;
+    let head = serde_json::to_vec(head).map_err(|e| HttpError::Other(e.to_string()))?;
     let mut framed = Vec::with_capacity(4 + head.len() + response.content_length().unwrap_or(0) as usize);
     framed.extend_from_slice(&(head.len() as u32).to_be_bytes());
     framed.extend_from_slice(&head);
@@ -134,6 +145,14 @@ pub async fn request_bytes(request: HttpRequest) -> Result<Vec<u8>, HttpError> {
 
 fn read_error(e: reqwest::Error) -> HttpError {
     if e.is_timeout() {
+        HttpError::Unavailable(e.to_string())
+    } else {
+        HttpError::Other(e.to_string())
+    }
+}
+
+pub(crate) fn send_error(e: reqwest::Error) -> HttpError {
+    if e.is_timeout() || e.is_connect() {
         HttpError::Unavailable(e.to_string())
     } else {
         HttpError::Other(e.to_string())
@@ -182,13 +201,7 @@ async fn send(request: HttpRequest) -> Result<(ResponseHead, reqwest::Response),
         builder = builder.body(bytes);
     }
 
-    let response = builder.headers(headers).send().await.map_err(|e| {
-        if e.is_timeout() || e.is_connect() {
-            HttpError::Unavailable(e.to_string())
-        } else {
-            HttpError::Other(e.to_string())
-        }
-    })?;
+    let response = builder.headers(headers).send().await.map_err(send_error)?;
 
     let status = response.status();
     let mut response_headers: BTreeMap<String, String> = BTreeMap::new();

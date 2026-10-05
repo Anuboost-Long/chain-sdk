@@ -18,6 +18,7 @@ to see what actually exists vs. what's just planned.
 | Models          | 🧪    | ⏳      | ⏳    | Draft    |
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
+| Browser         | 🧪    | ⚠       | ⏳    | Draft    |
 
 Legend:
 
@@ -168,3 +169,15 @@ reports nothing available until the WASAPI plan in its
 research/WINDOWS.md is built.
 
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.
+
+`browser` (request 36 — a separate signed-in browser window with its own
+persistent session, a toolbar with app buttons, reading the page and its
+same-origin frames, fetching with the session) is verified on macOS 27 in
+`apps/playground`'s dev build against a local test site: sign-in cookie
+through a redirect, persistence across relaunch, two isolated sessions,
+read with nested same-origin frames and a cross-origin frame listed as
+unreadable, fetch with the window open and closed, a `window.open`
+popup messaging its opener and closing itself, app button presses (and a
+forged press from the page refused), sign out open and closed. Windows is
+⚠: the same Tauri code compiles for it but has never run there
+(`agent-docs/capabilities/browser/research/WINDOWS.md` has the checklist).

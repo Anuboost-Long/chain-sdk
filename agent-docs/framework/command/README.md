@@ -902,7 +902,10 @@ true`, `scope: ["$APPDATA/files/*"]`) and `patchCargoToml()` adds the
   required for `desktop.files.url()` to actually work (see the `files`
   capability's `AGENTS.md` for the real bug this fixes: without either
   one, `convertFileSrc()` produces a syntactically valid `asset://` URL
-  that the webview refuses outright). `patchCargoToml()` also appends a
+  that the webview refuses outright). It also adds `"unstable"`, which
+  makes `Window::add_child` public — `desktop.browser`'s window holds a
+  toolbar webview above the page (`templates/browser.rs`, tracked like
+  `dev_inspector.rs`; see `agent-docs/capabilities/browser/`). `patchCargoToml()` also appends a
   `[profile.dev]` that drops debug info for dependencies and keeps only
   line tables for the app's own code — a fresh debug `target/` measured
   2.5 GB → 1.4 GB with it (same profile lives in the chain-sdk root

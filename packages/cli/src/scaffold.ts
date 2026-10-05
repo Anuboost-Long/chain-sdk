@@ -166,6 +166,8 @@ export function patchCargoToml(raw: string): string {
   // it, the "asset:" URI scheme handler is compiled out entirely (not a
   // scope/config issue, a missing-handler one), so desktop.files.url()'s
   // convertFileSrc() output silently fails to load in the webview.
+  // "unstable" makes Window::add_child public: desktop.browser's window
+  // holds a toolbar webview above the page (agent-docs/capabilities/browser).
   out = out.replace(
     /^tauri = \{ version = "2", features = \[([^\]]*)\] \}$/m,
     (line: string, featuresRaw: string) => {
@@ -173,7 +175,9 @@ export function patchCargoToml(raw: string): string {
         .split(",")
         .map((f) => f.trim())
         .filter(Boolean);
-      if (!features.includes('"protocol-asset"')) features.push('"protocol-asset"');
+      for (const feature of ['"protocol-asset"', '"unstable"']) {
+        if (!features.includes(feature)) features.push(feature);
+      }
       return `tauri = { version = "2", features = [${features.join(", ")}] }`;
     }
   );
@@ -202,6 +206,7 @@ export const TRACKED_FILES: TrackedFile[] = [
   { relPath: ".chain/native/Cargo.toml", kind: "patched", patch: patchCargoToml },
   { relPath: ".chain/native/src/lib.rs", kind: "template", templateName: "lib.rs" },
   { relPath: ".chain/native/build.rs", kind: "template", templateName: "build.rs" },
+  { relPath: ".chain/native/src/browser.rs", kind: "template", templateName: "browser.rs" },
   {
     relPath: ".chain/native/src/dev_inspector.rs",
     kind: "template",
