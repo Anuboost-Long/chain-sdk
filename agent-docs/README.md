@@ -54,3 +54,4 @@ feature added to this SDK.
 | AudioRecorder capability | [`capabilities/audio-recorder/`](capabilities/audio-recorder/README.md) | `desktop.audioRecorder` — record the microphone, the computer's own audio, or both mixed, to an AAC file |
 | Browser capability       | [`capabilities/browser/`](capabilities/browser/README.md)               | `desktop.browser` — a separate signed-in browser window: own session, toolbar buttons, read the page, fetch with the session |
 | Embeddings capability    | [`capabilities/embeddings/`](capabilities/embeddings/README.md)         | `desktop.embeddings` — on-device sentence embeddings from downloaded ONNX models + Hugging Face tokenizers |
+| Window capability        | [`capabilities/window/`](capabilities/window/README.md)                 | `desktop.window` — title bar style and size, window buttons, appearance, background colour, drag regions, insets, full screen |

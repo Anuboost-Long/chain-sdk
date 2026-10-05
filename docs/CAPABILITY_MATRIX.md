@@ -20,6 +20,7 @@ to see what actually exists vs. what's just planned.
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
 | Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
+| Window          | 🧪    | ⚠       | ⚠     | Draft    |
 
 Legend:
 
@@ -192,3 +193,17 @@ multilingual-e5-small in `cargo test`, and end to end in
 (every error code, cancel mid-run, unload). Windows is the same Rust on
 the same runtime but has never been built there
 (`agent-docs/capabilities/embeddings/research/WINDOWS.md`).
+
+`window` (request 38 — the app window's chrome: title bar style and
+size, title text, window buttons, appearance, background colour,
+page-declared drag regions, insets and full screen) is verified on macOS
+27 in `apps/playground`'s dev build: startup options from `package.json`
+on the first frame, the native bar sizes (32/40/52) with buttons where
+AppKit puts them through repeated zooms, a custom button position held
+through zooms and reset, click routing by AppKit hit-testing (drag areas
+to the native drag view, page and window buttons to themselves), and the
+window colour behind the page. A physical drag/double-click and full
+screen with real events are still to be confirmed. Windows and Linux are
+⚠: only the portable subset (standard/hidden, appearance, background,
+drag, full screen) applies, through Tauri's own calls, never run there
+(`agent-docs/capabilities/window/research/WINDOWS.md`).

@@ -38,6 +38,24 @@ body {
   margin: 0;
 }
 
+.title-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-left: calc(var(--chain-title-bar-inset-left, 0px) + 12px);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  user-select: none;
+}
+
+[data-chain-full-screen] .title-bar {
+  padding-left: 12px;
+}
+
 .playground {
   min-height: 100vh;
   box-sizing: border-box;

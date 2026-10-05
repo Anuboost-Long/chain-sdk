@@ -398,3 +398,31 @@ Same code and runtime; never built — checklist in research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
+
+## Window
+
+Used by:
+mneme (request 38 — run its dark nav bar to the top of the window with
+the window buttons on it, instead of under macOS 27's solid title bar)
+
+Generalizable:
+Yes — every desktop app with its own top bar (the Notion/Linear/VS Code
+look), and any app that wants its window colours right before the page
+paints
+
+Contract:
+Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contract.ts`)
+
+macOS:
+Implemented: objc2 property sets in `crates/core/src/window.rs`, a Swift
+drag view, toolbar-backed bar sizes and button placer in
+`crates/core/swift/ChainWindow.swift`; verified in the playground
+
+Windows:
+Portable subset through Tauri calls (hidden = no frame, theme,
+background, drag, full screen); overlay falls back; never run —
+checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+

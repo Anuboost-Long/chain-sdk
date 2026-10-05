@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager};
 
 mod browser;
 mod dev_inspector;
+mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -1208,7 +1209,10 @@ pub fn run() {
         .manage(ModelsState::default())
         .manage(browser::BrowserState::default())
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
+        .manage(window::WindowState::default())
+        .on_window_event(window::on_window_event)
         .setup(|_app| {
+            window::setup(_app)?;
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
             dev_inspector::start(_app.handle().clone());
@@ -1274,6 +1278,14 @@ pub fn run() {
             browser::browser_read,
             browser::browser_fetch,
             browser::browser_clear_session,
+            window::window_availability,
+            window::window_options,
+            window::window_set_options,
+            window::window_insets,
+            window::window_is_full_screen,
+            window::window_set_drag_regions,
+            window::window_start_drag,
+            window::window_title_bar_double_click,
             __chain_inspector_report
         ]))
         .run(tauri::generate_context!())

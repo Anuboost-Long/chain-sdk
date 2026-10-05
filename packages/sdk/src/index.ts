@@ -11,6 +11,7 @@ import { speech } from "./speech";
 import { storage } from "./storage";
 import { tts } from "./tts";
 import { vision } from "./vision";
+import { appWindow } from "./window";
 
 /**
  * Public Chain SDK entry point. Applications import `desktop` from
@@ -29,7 +30,8 @@ export const desktop = {
   tts,
   audioRecorder,
   browser,
-  embeddings
+  embeddings,
+  window: appWindow
 };
 
 export { sql } from "./storage-table";
@@ -151,3 +153,17 @@ export type {
   CountTokensOptions,
   TokenCounts
 } from "./contracts/embeddings";
+export type {
+  WindowApi,
+  WindowAvailability,
+  WindowOptions,
+  WindowButtonsOptions,
+  WindowButtonsPosition,
+  WindowAppearance,
+  WindowRect,
+  WindowUnsubscribe,
+  ResolvedWindowOptions,
+  TitleBarInsets,
+  TitleBarSize,
+  TitleBarStyle
+} from "./contracts/window";

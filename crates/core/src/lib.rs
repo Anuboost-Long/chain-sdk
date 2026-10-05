@@ -21,3 +21,4 @@ pub mod sherpa;
 pub mod speech;
 pub mod storage;
 pub mod vision;
+pub mod window;

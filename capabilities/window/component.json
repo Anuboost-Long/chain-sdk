@@ -1,0 +1,16 @@
+{
+  "name": "window",
+  "description": "The app window's chrome: title bar style and size, title text, window buttons (visibility and position), light/dark appearance, background colour, page-declared drag regions, title bar insets and full-screen state.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/window/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "unverified"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}
