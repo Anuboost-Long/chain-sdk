@@ -89,6 +89,7 @@ mod macos {
     const PROPERTY_AUDIO_CONVERTER: u32 = four_cc(b"acnv");
     const PROPERTY_CONVERTER_CONFIG: u32 = four_cc(b"acfg");
     const CONVERTER_ENCODE_BIT_RATE: u32 = four_cc(b"brat");
+    const CONVERTER_APPLICABLE_BIT_RATES: u32 = four_cc(b"aebr");
 
     #[link(name = "AudioToolbox", kind = "framework")]
     extern "C" {
@@ -105,6 +106,8 @@ mod macos {
         fn ExtAudioFileWrite(file: ExtAudioFileRef, frames: u32, data: *const AudioBufferList) -> OSStatus;
         fn ExtAudioFileDispose(file: ExtAudioFileRef) -> OSStatus;
         fn AudioConverterSetProperty(converter: *mut c_void, id: u32, size: u32, data: *const c_void) -> OSStatus;
+        fn AudioConverterGetPropertyInfo(converter: *mut c_void, id: u32, size: *mut u32, writable: *mut u8) -> OSStatus;
+        fn AudioConverterGetProperty(converter: *mut c_void, id: u32, size: *mut u32, data: *mut c_void) -> OSStatus;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -135,6 +138,32 @@ mod macos {
         } else {
             Err(M4aError::Failed(format!("couldn't {what} (OSStatus {})", describe(status))))
         }
+    }
+
+    #[repr(C)]
+    struct AudioValueRange {
+        minimum: f64,
+        maximum: f64,
+    }
+
+    /// `BIT_RATE`, or the highest the encoder allows below it: at 8/16 kHz
+    /// mono it can't do 64 kbps and fails every write ('!dat') if asked to.
+    unsafe fn applicable_bit_rate(converter: *mut c_void) -> u32 {
+        let mut size = 0u32;
+        if AudioConverterGetPropertyInfo(converter, CONVERTER_APPLICABLE_BIT_RATES, &mut size, std::ptr::null_mut()) != 0 {
+            return BIT_RATE;
+        }
+        let mut ranges: Vec<AudioValueRange> = Vec::with_capacity(size as usize / std::mem::size_of::<AudioValueRange>());
+        if AudioConverterGetProperty(converter, CONVERTER_APPLICABLE_BIT_RATES, &mut size, ranges.as_mut_ptr().cast()) != 0 {
+            return BIT_RATE;
+        }
+        ranges.set_len(size as usize / std::mem::size_of::<AudioValueRange>());
+        ranges
+            .iter()
+            .map(|range| range.maximum as u32)
+            .filter(|&rate| rate <= BIT_RATE)
+            .max()
+            .unwrap_or(BIT_RATE)
     }
 
     pub struct M4aWriter {
@@ -193,8 +222,8 @@ mod macos {
             }
         }
 
-        /// Best effort: the encoder picks its own rate when a sample rate
-        /// can't take this one, which is still fine for speech.
+        /// Best effort: the encoder keeps its default rate if the
+        /// converter can't be reached.
         unsafe fn set_bit_rate(&self) {
             let mut converter: *mut c_void = std::ptr::null_mut();
             let mut size = std::mem::size_of::<*mut c_void>() as u32;
@@ -204,7 +233,7 @@ mod macos {
             {
                 return;
             }
-            let bit_rate = BIT_RATE;
+            let bit_rate = applicable_bit_rate(converter);
             if AudioConverterSetProperty(converter, CONVERTER_ENCODE_BIT_RATE, 4, (&bit_rate as *const u32).cast()) == 0 {
                 // A null config tells ExtAudioFile to apply the converter change.
                 let config: *const c_void = std::ptr::null();
@@ -269,5 +298,16 @@ mod tests {
         assert_eq!(&bytes[4..8], b"ftyp");
         // Two seconds at 64 kbps is ~16 KB; WAV would be 96 KB.
         assert!(bytes.len() < 40_000, "{} bytes", bytes.len());
+    }
+
+    #[test]
+    fn encodes_at_telephone_rates() {
+        for rate in [8_000, 16_000] {
+            let path = std::env::temp_dir().join(format!("chain-m4a-test-{}-{rate}.m4a", std::process::id()));
+            let mut writer = M4aWriter::create(&path, rate).unwrap();
+            writer.write(&vec![0.1; rate as usize]).unwrap();
+            writer.finish().unwrap();
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 }

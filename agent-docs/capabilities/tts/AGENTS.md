@@ -58,6 +58,11 @@ Requested by mneme (request 21, part 2).
       one `unload()` went 637 → 50 MB by the time it resolved, while
       other cycles kept ~330 MB reserved, which the next load reused
       (loaded footprint 475 MB, not 637) — no growth across cycles.
+- [x] `compile` at 8/16 kHz (e.g. Piper low voices): `M4aWriter` asked
+      for 64 kbps, which AAC can't do there, so every write failed
+      `'!dat'`. Fixed 2026-10-04 (found by the audio recorder): it now
+      picks the highest applicable bit rate ≤ 64 kbps. Unit-tested, not
+      rerun through `compile`.
 - [ ] Idle unload on Windows: same code, but no `return_freed_memory`
       equivalent (the Windows heap decommits on its own schedule); unrun.
 - [ ] `compile` on Windows: `M4aWriter` is `Unsupported` there — see

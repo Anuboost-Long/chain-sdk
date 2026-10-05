@@ -809,6 +809,117 @@ async fn tts_unload() -> Result<(), String> {
         .map_err(to_tts_command_error)
 }
 
+// Bridges the audio-recorder capability contract (capabilities/audio-recorder
+// in chain-sdk). Levels go out as `chain://audio-recorder-level` tagged
+// with the caller's `id`; the finished temp file moves into files on stop.
+fn to_audio_recorder_command_error(e: chain_core::audio_recorder::RecorderError) -> String {
+    use chain_core::audio_recorder::RecorderError::*;
+    match e {
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Failed(m) => m,
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AudioRecorderLevelPayload {
+    id: String,
+    level: f32,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AudioRecorderMicrophonePayload {
+    id: String,
+    change: chain_core::audio_recorder::MicrophoneChange,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinishedRecording {
+    file: String,
+    mime_type: &'static str,
+    duration_ms: u64,
+}
+
+#[tauri::command]
+async fn audio_recorder_availability() -> Result<chain_core::audio_recorder::Availability, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::availability).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn audio_recorder_microphones() -> Result<Vec<chain_core::audio_recorder::Microphone>, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::microphones).await.map_err(|e| e.to_string())
+}
+
+// Blocks while the OS asks for permission, so not on the main thread.
+// Levels go out as `chain://audio-recorder-level`, microphone switches as
+// `chain://audio-recorder-microphone`, both tagged with the caller's `id`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn audio_recorder_start(
+    app: tauri::AppHandle,
+    id: String,
+    source: chain_core::audio_recorder::Source,
+    microphone: Option<String>,
+    avoid_bluetooth_microphone: bool,
+    echo_cancellation: bool,
+    noise_suppression: bool,
+    auto_gain_control: bool,
+) -> Result<chain_core::audio_recorder::Started, String> {
+    let choice = chain_core::audio_recorder::MicrophoneChoice { id: microphone, avoid_bluetooth: avoid_bluetooth_microphone };
+    let processing =
+        chain_core::audio_recorder::Processing { echo_cancellation, noise_suppression, auto_gain_control };
+    let switches = (app.clone(), id.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        chain_core::audio_recorder::start(
+            source,
+            choice,
+            processing,
+            move |level| {
+                let _ = app.emit("chain://audio-recorder-level", AudioRecorderLevelPayload { id: id.clone(), level });
+            },
+            move |change| {
+                let (app, id) = &switches;
+                let _ = app.emit("chain://audio-recorder-microphone", AudioRecorderMicrophonePayload { id: id.clone(), change });
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+fn audio_recorder_pause() -> Result<(), String> {
+    chain_core::audio_recorder::pause().map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+fn audio_recorder_resume() -> Result<(), String> {
+    chain_core::audio_recorder::resume().map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+async fn audio_recorder_stop(
+    app: tauri::AppHandle,
+    files_state: tauri::State<'_, FilesState>,
+) -> Result<FinishedRecording, String> {
+    let finished = tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::stop)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_audio_recorder_command_error)?;
+    let file = with_files(&app, &files_state, |files| files.adopt(&finished.path, Some("m4a"))).inspect_err(|_| {
+        let _ = std::fs::remove_file(&finished.path);
+    })?;
+    Ok(FinishedRecording { file, mime_type: "audio/mp4", duration_ms: finished.duration_ms })
+}
+
+#[tauri::command]
+async fn audio_recorder_cancel() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::cancel).await.map_err(|e| e.to_string())
+}
+
 // Bridges the speech capability contract (capabilities/speech in
 // chain-sdk). The audio is a `desktop.files` reference resolved to its
 // path here — an hour of audio never crosses IPC. Progress goes out as
@@ -1043,6 +1154,13 @@ pub fn run() {
             tts_cancel,
             tts_set_idle_unload,
             tts_unload,
+            audio_recorder_availability,
+            audio_recorder_microphones,
+            audio_recorder_start,
+            audio_recorder_pause,
+            audio_recorder_resume,
+            audio_recorder_stop,
+            audio_recorder_cancel,
             __chain_inspector_report
         ]))
         .run(tauri::generate_context!())

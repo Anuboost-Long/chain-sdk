@@ -51,3 +51,4 @@ feature added to this SDK.
 | Speech capability        | [`capabilities/speech/`](capabilities/speech/README.md)                 | `desktop.speech` — on-device transcription of a stored recording (SpeechAnalyzer via a Swift bridge)     |
 | Models capability        | [`capabilities/models/`](capabilities/models/README.md)                 | `desktop.models` — user-downloaded, SHA-256-verified model packs run by the bundled sherpa-onnx engine   |
 | Tts capability           | [`capabilities/tts/`](capabilities/tts/README.md)                       | `desktop.tts` — Kokoro/Piper voices via sherpa-onnx; GPL-3.0 opt-in per app (`chain.gpl`)                |
+| AudioRecorder capability | [`capabilities/audio-recorder/`](capabilities/audio-recorder/README.md) | `desktop.audioRecorder` — record the microphone, the computer's own audio, or both mixed, to an AAC file |

@@ -327,7 +327,8 @@ An app declares OS permissions in its own `package.json`, never in
 "chain": {
   "permissions": {
     "microphone": "Why the app records audio.",
-    "speechRecognition": "Why the app transcribes audio."
+    "speechRecognition": "Why the app transcribes audio.",
+    "systemAudio": "Why the app records what the computer plays."
   }
 }
 ```
@@ -341,8 +342,9 @@ binary and merges it into the bundle) and, for `microphone`,
 `tauri build` as a `--config` override. Both files are marked GENERATED
 and removed when nothing is declared; a hand-written `Info.plist` is left
 alone with a warning. An unknown key fails the run. Changing a
-declaration needs no `chain update`. See
-`agent-docs/capabilities/microphone/` and `speech/`.
+declaration needs no `chain update`. `systemAudio` becomes
+`NSAudioCaptureUsageDescription` and needs no entitlement. See
+`agent-docs/capabilities/microphone/`, `speech/` and `audio-recorder/`.
 
 ### Permission prompts under `chain dev`
 

@@ -1,4 +1,5 @@
 import { agentServer } from "./agent-server";
+import { audioRecorder } from "./audio-recorder";
 import { files } from "./files";
 import { http } from "./http";
 import { models } from "./models";
@@ -23,7 +24,8 @@ export const desktop = {
   vision,
   speech,
   models,
-  tts
+  tts,
+  audioRecorder
 };
 
 export { sql } from "./storage-table";
@@ -105,3 +107,14 @@ export type {
   CompiledAudio,
   SegmentTiming
 } from "./contracts/tts";
+export type {
+  AudioRecorderApi,
+  RecordingSource,
+  RecordingAvailability,
+  StartRecordingOptions,
+  FinishedRecording,
+  Microphone,
+  MicrophoneTransport,
+  MicrophoneChange,
+  RecordingStarted
+} from "./contracts/audio-recorder";

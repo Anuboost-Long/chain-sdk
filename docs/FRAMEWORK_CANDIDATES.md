@@ -321,3 +321,31 @@ Archive pinned, never built
 
 Possible package:
 `@chain/sdk` (bundled in core; engine behind a Cargo feature)
+
+## AudioRecorder
+
+Used by:
+mneme (request 32 — record lectures, calls and videos the laptop plays,
+alone or with the microphone; request 33 — cancel the speakers' echo
+from the microphone when recording both; request 34 — noise
+suppression and gain control on the microphone; request 35 — choose the
+microphone, avoid Bluetooth headset mics)
+
+Generalizable:
+Yes — any app that records meetings, lectures or its own demos
+
+Contract:
+Draft (`agent-docs/capabilities/audio-recorder/CONTRACT.md`, `capabilities/audio-recorder/contract.ts`)
+
+macOS:
+Implemented (Core Audio process tap + aggregate device, macOS 14.2+ for
+system audio); verified end to end except the refusal path. Echo
+cancellation (SpeexDSP, platform-independent Rust/C) verified live on
+laptop speakers; noise suppression and gain control (same library)
+unit-tested
+
+Windows:
+Not started — WASAPI loopback plan in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)

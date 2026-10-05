@@ -17,6 +17,7 @@ to see what actually exists vs. what's just planned.
 | Speech          | 🧪    | ⏳      | ⏳    | Draft    |
 | Models          | 🧪    | ⏳      | ⏳    | Draft    |
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
+| AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -147,5 +148,23 @@ verified on macOS end to end; `compile` is `UNSUPPORTED` on Windows until
 its encoder exists (`agent-docs/capabilities/tts/research/WINDOWS.md`). It links espeak-ng (GPL-3.0), so it's only
 compiled into apps that opt in with package.json `"chain": { "gpl": true }`
 (`agent-docs/capabilities/models/research/LICENSING.md`).
+
+`audioRecorder` (request 32 — microphone, the computer's own audio, or
+both mixed, streamed to AAC) is verified on macOS in a bundled
+`apps/playground` build: all three sources transcribed back correctly,
+pause, cancel, silence kept in the duration. The refusal path
+(`PERMISSION_DENIED`) isn't verified yet. Echo cancellation for "both"
+(request 33, vendored SpeexDSP, on by default) is verified live on
+MacBook speakers: the 46 ms echo peak disappears with it on. Noise
+suppression and gain control on the microphone (request 34, same
+library, off by default) are unit-tested; noise suppression is also
+verified live (−14 dB on noise from the speakers). A bug where the
+microphone's gain raised leftover echo back to lecture level is fixed:
+the gain now only applies while someone speaks. Choosing the microphone
+(request 35: list, pick by id, avoid Bluetooth headset mics, survive the
+mic disappearing) is verified with a simulated device; real Bluetooth
+needs AirPods. Windows
+reports nothing available until the WASAPI plan in its
+research/WINDOWS.md is built.
 
 See `docs/FRAMEWORK_CANDIDATES.md` for what's next.

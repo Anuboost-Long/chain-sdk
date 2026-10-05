@@ -9,5 +9,7 @@
 	<string>The playground records audio to prove microphone capture works.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>The playground transcribes recordings to prove on-device speech recognition works.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>The playground records what the computer plays to prove system audio capture works.</string>
 </dict>
 </plist>

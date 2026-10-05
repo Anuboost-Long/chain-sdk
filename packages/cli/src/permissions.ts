@@ -15,11 +15,13 @@ import { nativeProjectDir } from "./nativeProject.js";
 export interface AppPermissions {
   microphone?: string;
   speechRecognition?: string;
+  systemAudio?: string;
 }
 
 const PLIST_KEYS: Record<keyof AppPermissions, string> = {
   microphone: "NSMicrophoneUsageDescription",
-  speechRecognition: "NSSpeechRecognitionUsageDescription"
+  speechRecognition: "NSSpeechRecognitionUsageDescription",
+  systemAudio: "NSAudioCaptureUsageDescription"
 };
 
 // Without it, a signed build with the hardened runtime gets silence from

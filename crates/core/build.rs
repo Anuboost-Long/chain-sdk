@@ -1,8 +1,9 @@
 //! Two native pieces for chain-core:
 //!
 //! - macOS: compiles swift/*.swift into one static library — the speech
-//!   capability's SpeechAnalyzer bridge (src/speech.rs) and vision's
-//!   RecognizeDocumentsRequest bridge (src/vision.rs). Needs
+//!   capability's SpeechAnalyzer bridge (src/speech.rs), vision's
+//!   RecognizeDocumentsRequest bridge (src/vision.rs) and the audio
+//!   recorder's Core Audio capture (src/audio_recorder.rs). Needs
 //!   `swiftc`, which every Mac that can build a Tauri app already has
 //!   through the Xcode Command Line Tools.
 //! - Every desktop target: fetches sherpa-onnx's official **no-TTS** static
@@ -11,6 +12,10 @@
 //!   no espeak-ng (GPL-3); see agent-docs/capabilities/models/research/LICENSING.md.
 //!   Set CHAIN_SHERPA_ONNX_ARCHIVE_DIR to a folder holding the archive to
 //!   build offline.
+//! - Every target: compiles the vendored SpeexDSP 1.2.1 echo canceller
+//!   (vendor/speexdsp, BSD-3) — the audio recorder's echo cancellation,
+//!   noise suppression and gain control (src/microphone_processor.rs). Only needs the C compiler a Tauri build
+//!   already uses.
 
 use std::env;
 use std::fs;
@@ -27,9 +32,11 @@ const SWIFT_MIN_MACOS: &str = "12.0";
 fn main() {
     println!("cargo:rerun-if-changed=swift/ChainSpeech.swift");
     println!("cargo:rerun-if-changed=swift/ChainVision.swift");
+    println!("cargo:rerun-if-changed=swift/ChainRecorder.swift");
     println!("cargo:rerun-if-env-changed=CHAIN_SHERPA_ONNX_ARCHIVE_DIR");
     println!("cargo::rustc-check-cfg=cfg(chain_no_sherpa)");
     link_sherpa_onnx();
+    build_speexdsp();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         build_swift_bridge();
     }
@@ -131,6 +138,25 @@ fn link_sherpa_onnx() {
     }
 }
 
+/// Unmodified upstream sources from the official 1.2.1 release tarball,
+/// only the files the echo canceller and preprocessor need;
+/// speexdsp_config_types.h is what its configure would generate. Always
+/// optimized: at -O0 it costs real-time headroom in a debug app.
+fn build_speexdsp() {
+    println!("cargo:rerun-if-changed=vendor/speexdsp");
+    cc::Build::new()
+        .files(["mdf.c", "preprocess.c", "fftwrap.c", "filterbank.c", "smallft.c"].map(|f| format!("vendor/speexdsp/libspeexdsp/{f}")))
+        .include("vendor/speexdsp/include")
+        .define("FLOATING_POINT", None)
+        // smallft, not kiss_fft: sherpa-onnx already links a kissfft whose
+        // symbols would clash.
+        .define("USE_SMALLFT", None)
+        .define("EXPORT", Some(""))
+        .opt_level(3)
+        .warnings(false)
+        .compile("chain_speexdsp");
+}
+
 fn marker_lib(os: &str) -> &'static str {
     if os == "windows" { "sherpa-onnx-c-api.lib" } else { "libsherpa-onnx-c-api.a" }
 }
@@ -174,7 +200,7 @@ fn build_swift_bridge() {
     let status = Command::new("swiftc")
         .args(["-emit-library", "-static", "-parse-as-library", "-O", "-swift-version", "5"])
         .args(["-module-name", "ChainSwift", "-target", &target, "-sdk", sdk.trim()])
-        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift"])
+        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift", "swift/ChainRecorder.swift"])
         .arg("-o")
         .arg(out_dir.join("libChainSwift.a"))
         .status()
@@ -195,7 +221,7 @@ fn build_swift_bridge() {
     for path in info["paths"]["runtimeLibraryPaths"].as_array().into_iter().flatten() {
         println!("cargo:rustc-link-search=native={}", path.as_str().unwrap_or_default());
     }
-    for framework in ["Foundation", "AVFoundation", "Speech", "Vision", "ImageIO", "CoreGraphics"] {
+    for framework in ["Foundation", "AVFoundation", "Speech", "Vision", "ImageIO", "CoreGraphics", "CoreAudio"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }
