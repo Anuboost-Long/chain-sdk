@@ -223,6 +223,18 @@ actually hand off, so this is now fixed:
   from any machine with network access, verified against the real
   `github.com/Anuboost-Long/chain-sdk` remote (see that PR's verification
   notes).
+- **Local checkout exception (`init` only).** Until the packages are
+  actually on npm, `^<version>` doesn't resolve, so `chain init` run
+  from a chain-sdk checkout (`npm link`, detected by `localCheckout()`
+  in `scaffold.ts`: `crates/core` two levels up and no `node_modules` in
+  the CLI's path) links the new app back to that checkout instead —
+  `file:` for `@chain/sdk`/`@chain/cli`, `path =` for `chain-core` (it
+  has to match the checkout's templates). Installed from npm, this never
+  triggers. `update` never adds a link; it keeps one that's already in
+  the app (`file:`/`path =`), and leaves `^<version>`/git ones as they
+  are — so existing apps' dependencies don't change. Yarn 1 copies a
+  `file:` package rather than symlinking it, so SDK edits need
+  `yarn install --force` there; npm symlinks.
 - **`@chain/sdk`/`@chain/cli`** are ordinary versioned npm dependencies
   (`^<version>`) — unlike Cargo, npm's git-dependency spec has no supported
   way to install a single package out of a subdirectory of a monorepo (only

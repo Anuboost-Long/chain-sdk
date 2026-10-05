@@ -19,14 +19,39 @@ export interface ScaffoldContext {
   name: string;
   sdkVersion: string;
   cliVersion: string;
+  /** The chain-sdk checkout a new app links to instead of npm and git. */
+  checkout?: string;
 }
 
-export function scaffoldContext(target: string): ScaffoldContext {
+/** `linkCheckout`: when this CLI runs from a chain-sdk checkout (`npm
+ * link`), point @chain/sdk, @chain/cli and chain-core at it — only `init`
+ * asks, so `update` never rewrites an existing app's dependencies. */
+export function scaffoldContext(target: string, linkCheckout = false): ScaffoldContext {
   const name = path.basename(target);
   const ownPkg = JSON.parse(fs.readFileSync(path.join(chainRoot, "package.json"), "utf8")) as {
     version: string;
   };
-  return { target, name, sdkVersion: CHAIN_SDK_VERSION, cliVersion: ownPkg.version };
+  const checkout = linkCheckout ? localCheckout() : undefined;
+  return { target, name, sdkVersion: CHAIN_SDK_VERSION, cliVersion: ownPkg.version, checkout };
+}
+
+/** The chain-sdk repo around this CLI, or undefined once it's installed from npm. */
+function localCheckout(): string | undefined {
+  const root = path.resolve(chainRoot, "../..");
+  const installed = chainRoot.split(path.sep).includes("node_modules");
+  return !installed && fs.existsSync(path.join(root, "crates/core/Cargo.toml")) ? root : undefined;
+}
+
+function relativeTo(from: string, to: string): string {
+  return path.relative(from, to).split(path.sep).join("/");
+}
+
+/** A local link already in the app (from a local `init`, or added by hand)
+ * is kept; otherwise the checkout's when linking one, else the npm range. */
+function chainPackageSpec(current: string | undefined, ctx: ScaffoldContext, pkg: string, version: string): string {
+  if (current?.startsWith("file:")) return current;
+  if (ctx.checkout) return `file:${relativeTo(ctx.target, path.join(ctx.checkout, "packages", pkg))}`;
+  return `^${version}`;
 }
 
 /**
@@ -53,7 +78,7 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
   pkg.scripts = scripts;
   pkg.dependencies = {
     ...pkg.dependencies,
-    "@chain/sdk": `^${ctx.sdkVersion}`,
+    "@chain/sdk": chainPackageSpec(pkg.dependencies?.["@chain/sdk"], ctx, "sdk", ctx.sdkVersion),
     "react-router-dom": "^7",
     clsx: "^2"
   };
@@ -61,7 +86,7 @@ export function patchPackageJson(raw: string, ctx: ScaffoldContext): string {
     ...pkg.devDependencies,
     tailwindcss: "^4",
     "@tailwindcss/vite": "^4",
-    "@chain/cli": `^${ctx.cliVersion}`
+    "@chain/cli": chainPackageSpec(pkg.devDependencies?.["@chain/cli"], ctx, "cli", ctx.cliVersion)
   };
   return JSON.stringify(pkg, null, 2) + "\n";
 }
@@ -142,13 +167,19 @@ const DEV_PROFILE =
   '[profile.dev.package."*"]\n' +
   "debug = false";
 
-export function patchCargoToml(raw: string): string {
+export function patchCargoToml(raw: string, ctx: ScaffoldContext): string {
   // A pinned git dependency, not a local path: chain-core lives in the
   // chain-sdk repo, not next to a scaffolded app, so the build has to work
   // on any machine (CI included), not just one with chain-sdk cloned as a
   // sibling folder. CHAIN_CORE_REV is baked in at @chain/cli's own build
-  // time — see scripts/sync-meta.mjs.
-  const depLine = `chain-core = { git = "${CHAIN_CORE_GIT_URL}", rev = "${CHAIN_CORE_REV}" }`;
+  // time — see scripts/sync-meta.mjs. The exception is a local link, kept
+  // like chainPackageSpec's: it has to match the checkout's templates.
+  const nativeDir = path.join(ctx.target, ".chain/native");
+  const depLine =
+    raw.match(/^chain-core = \{ path = .*/m)?.[0] ??
+    (ctx.checkout
+      ? `chain-core = { path = "${relativeTo(nativeDir, path.join(ctx.checkout, "crates/core"))}" }`
+      : `chain-core = { git = "${CHAIN_CORE_GIT_URL}", rev = "${CHAIN_CORE_REV}" }`);
   let out = /^chain-core = .*/m.test(raw)
     ? raw.replace(/^chain-core = .*/m, depLine)
     : raw.replace('serde_json = "1"', `serde_json = "1"\n${depLine}`);
