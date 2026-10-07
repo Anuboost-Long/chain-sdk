@@ -37,6 +37,10 @@ once `@chain/cli` itself is installed from npm):
 
 - `packages/sdk/src/index.ts` — the `desktop` object; add a new
   capability here once it has a contract under `capabilities/`.
+- `packages/sdk/src/native.ts` — the only file that imports
+  `invoke` from `@tauri-apps/api/core`; every capability imports it from
+  here. It records calls for `chain inspect --trace` while one runs (see
+  the inspector section of `agent-docs/framework/command/README.md`).
 - `packages/sdk/src/errors.ts` — the shared `ChainErrorCode` union and
   `ChainError` shape every capability must throw.
 - `packages/sdk/src/platform.ts` — the platform capability's SDK-side

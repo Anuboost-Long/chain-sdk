@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { confirm } from "./doctor.js";
 import { checkChainApp, inspectorInfoPath } from "./nativeProject.js";
+import { buildReport, dumpScript, formatReport, startScript, stopScript, type NativeTrace, type PageTrace } from "./trace.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -157,6 +158,47 @@ export async function inspect(args: string[]): Promise<void> {
     return send({ cmd: "eval", code }, timeoutMs);
   }
 
+  async function focusWindow(): Promise<string> {
+    const res = await send({ cmd: "focus" });
+    if (!res.ok) throw new Error(res.error ?? "couldn't focus the window");
+    return "focused";
+  }
+
+  async function nativeTrace(action: string): Promise<NativeTrace | null> {
+    const res = await send({ cmd: "trace", action });
+    if (!res.ok) throw new Error(res.error ?? `trace ${action} failed`);
+    return res.result ? (JSON.parse(res.result) as NativeTrace | null) : null;
+  }
+
+  async function pageEval<T>(code: string): Promise<T> {
+    const res = await evalCode(code);
+    if (!res.ok) throw new Error(res.error ?? "eval failed");
+    return JSON.parse(res.result ?? "null") as T;
+  }
+
+  /** `start`, or `dump`/`stop` printing the report (as JSON with --json). */
+  async function trace(action: string, json: boolean): Promise<string> {
+    switch (action) {
+      case "start": {
+        await nativeTrace("start");
+        const page = await pageEval<{ visibility: string }>(startScript);
+        return page.visibility === "visible"
+          ? "trace started"
+          : `trace started — but the page is ${page.visibility}, so no frames render; run --focus`;
+      }
+      case "dump":
+      case "stop": {
+        const page = await pageEval<PageTrace | null>(action === "stop" ? stopScript : dumpScript);
+        const native = await nativeTrace(action);
+        if (!page) throw new Error("no trace running — start one with --trace start");
+        const report = buildReport(page, native);
+        return json ? JSON.stringify(report) : formatReport(report);
+      }
+      default:
+        throw new Error("usage: trace start|dump|stop [--json]");
+    }
+  }
+
   async function getRect(): Promise<WindowRect> {
     const res = await send({ cmd: "rect" });
     if (!res.ok || res.result === undefined) throw new Error(res.error ?? "failed to get window rect");
@@ -281,7 +323,7 @@ export async function inspect(args: string[]): Promise<void> {
     return false;
   }
 
-  // One-shot flags (--eval/--rect/--screenshot/--drag) make scripted/agent
+  // One-shot flags (--eval/--rect/--focus/--trace/--screenshot/--drag) make scripted/agent
   // use a supported path instead of piping lines into the REPL's stdin —
   // run exactly one command, print its result, exit with a real code, no
   // REPL banner. No flag given falls through to the REPL below unchanged.
@@ -295,6 +337,12 @@ export async function inspect(args: string[]): Promise<void> {
           break;
         case "--rect":
           output = JSON.stringify(await getRect());
+          break;
+        case "--focus":
+          output = await focusWindow();
+          break;
+        case "--trace":
+          output = await trace(flagArgs[0] ?? "", flagArgs.includes("--json"));
           break;
         case "--screenshot": {
           const { rest, selector } = extractSelector(flagArgs);
@@ -358,7 +406,7 @@ export async function inspect(args: string[]): Promise<void> {
           console.log(
             "commands: eval <js>, click <sel>, click-text <text>, text [sel], wait <sel>, " +
               "type <sel> <text>, rect, screenshot <path> [--selector <sel>], " +
-              "drag <x1> <y1> <x2> <y2> [--selector <sel>], quit"
+              "drag <x1> <y1> <x2> <y2> [--selector <sel>], focus, trace start|dump|stop [--json], quit"
           );
           break;
         case "eval":
@@ -379,6 +427,14 @@ export async function inspect(args: string[]): Promise<void> {
         case "rect":
           console.log(JSON.stringify(await getRect()));
           break;
+        case "focus":
+          console.log(await focusWindow());
+          break;
+        case "trace": {
+          const [action = "", ...options] = splitArgs(rest);
+          console.log(await trace(action, options.includes("--json")));
+          break;
+        }
         case "screenshot": {
           const { rest: positional, selector } = extractSelector(splitArgs(rest));
           if (!positional[0]) {

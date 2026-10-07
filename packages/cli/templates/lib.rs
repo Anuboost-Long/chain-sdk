@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager};
 
+mod browser;
 mod dev_inspector;
+mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -49,24 +51,69 @@ fn storage_migrate(
     with_storage(&app, &state, |db| db.migrate(&migrations))
 }
 
+// `transaction` is the id from storage_begin, for a call made inside
+// `desktop.storage.transaction()`; absent otherwise.
 #[tauri::command]
 fn storage_query(
     app: tauri::AppHandle,
     state: tauri::State<StorageState>,
+    transaction: Option<u64>,
     sql: String,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    with_storage(&app, &state, |db| db.query(&sql, &params))
+    with_storage(&app, &state, |db| db.query(transaction, &sql, &params))
 }
 
 #[tauri::command]
 fn storage_execute(
     app: tauri::AppHandle,
     state: tauri::State<StorageState>,
+    transaction: Option<u64>,
     sql: String,
     params: Vec<serde_json::Value>,
 ) -> Result<chain_core::storage::ExecuteResult, String> {
-    with_storage(&app, &state, |db| db.execute(&sql, &params))
+    with_storage(&app, &state, |db| db.execute(transaction, &sql, &params))
+}
+
+#[tauri::command]
+fn storage_begin(app: tauri::AppHandle, state: tauri::State<StorageState>) -> Result<u64, String> {
+    with_storage(&app, &state, |db| db.begin())
+}
+
+#[tauri::command]
+fn storage_commit(app: tauri::AppHandle, state: tauri::State<StorageState>, transaction: u64) -> Result<(), String> {
+    with_storage(&app, &state, |db| db.commit(transaction))
+}
+
+#[tauri::command]
+fn storage_rollback(app: tauri::AppHandle, state: tauri::State<StorageState>, transaction: u64) -> Result<(), String> {
+    with_storage(&app, &state, |db| db.rollback(transaction))
+}
+
+// A reloaded or navigated page can't finish what the previous one started.
+// The browser capability's webviews are other sites, not the app.
+fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
+    if webview.label().starts_with(chain_core::browser::LABEL_PREFIX) {
+        return;
+    }
+    rollback_abandoned_transaction(webview, payload);
+    if payload.event() == tauri::webview::PageLoadEvent::Started {
+        chain_core::audio_recorder::cancel();
+    }
+}
+
+// A page that reloads mid-transaction can never commit or roll it back.
+fn rollback_abandoned_transaction(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
+    if payload.event() != tauri::webview::PageLoadEvent::Started {
+        return;
+    }
+    let state = webview.state::<StorageState>();
+    let guard = state.0.lock().expect("storage mutex poisoned");
+    if let Some(db) = guard.as_ref() {
+        if let Err(e) = db.rollback_abandoned() {
+            eprintln!("[chain] couldn't roll back an abandoned storage transaction: {}", e.0);
+        }
+    }
 }
 
 // Bridges the files capability contract (capabilities/files in
@@ -140,6 +187,93 @@ fn files_delete(
     with_files(&app, &state, |files| files.delete(&reference))
 }
 
+fn to_open_command_error(e: chain_core::files::OpenError) -> String {
+    use chain_core::files::OpenError::*;
+    match e {
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Other(m) => m,
+    }
+}
+
+// Sync, so Tauri runs them on the main thread, where NSWorkspace and
+// ShellExecute belong.
+#[tauri::command]
+fn files_open(app: tauri::AppHandle, state: tauri::State<FilesState>, reference: String) -> Result<(), String> {
+    with_files(&app, &state, |files| Ok(files.open_in_app(&reference)))?.map_err(to_open_command_error)
+}
+
+#[tauri::command]
+fn files_reveal(app: tauri::AppHandle, state: tauri::State<FilesState>, reference: String) -> Result<(), String> {
+    with_files(&app, &state, |files| Ok(files.reveal(&reference)))?.map_err(to_open_command_error)
+}
+
+fn to_pick_command_error(e: chain_core::files::PickError) -> String {
+    use chain_core::files::PickError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Other(m) => m,
+    }
+}
+
+// Always shows the save panel (a sheet on macOS); native writes the bytes
+// where the user chose. Returns the chosen file name, or null on cancel —
+// never a path. See CONTRACT.md's save() section.
+#[tauri::command]
+async fn files_save(
+    window: tauri::Window,
+    bytes: Vec<u8>,
+    suggested_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    let options = chain_core::files::SaveOptions {
+        suggested_name,
+        extensions: extensions.unwrap_or_default(),
+    };
+    chain_core::files::save(&window, &bytes, &options).await.map_err(to_pick_command_error)
+}
+
+#[derive(serde::Serialize)]
+struct PickedFileHeader {
+    name: String,
+    size: usize,
+}
+
+// Async so the picker (a sheet on macOS, attached to the calling window)
+// never blocks the UI thread while it's open. Returns raw bytes rather
+// than JSON: a u32 little-endian header length, a JSON header
+// `[{ name, size }]`, then every file's bytes back to back — JSON number
+// arrays would turn a 20 MB PDF into ~70 MB of text. The SDK's
+// `files.pick()` decodes it (packages/sdk/src/files.ts).
+#[tauri::command]
+async fn files_pick(
+    window: tauri::Window,
+    multiple: Option<bool>,
+    extensions: Option<Vec<String>>,
+) -> Result<tauri::ipc::Response, String> {
+    let options = chain_core::files::PickOptions {
+        multiple: multiple.unwrap_or(false),
+        extensions: extensions.unwrap_or_default(),
+    };
+    let picked = chain_core::files::pick(&window, &options).await.map_err(to_pick_command_error)?;
+
+    let header: Vec<PickedFileHeader> = picked
+        .iter()
+        .map(|file| PickedFileHeader { name: file.name.clone(), size: file.bytes.len() })
+        .collect();
+    let header = serde_json::to_vec(&header).map_err(|e| e.to_string())?;
+    let total: usize = picked.iter().map(|file| file.bytes.len()).sum();
+    let mut body = Vec::with_capacity(4 + header.len() + total);
+    body.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    body.extend_from_slice(&header);
+    for file in &picked {
+        body.extend_from_slice(&file.bytes);
+    }
+    Ok(tauri::ipc::Response::new(body))
+}
+
 // Bridges the http capability contract (capabilities/http in
 // chain-sdk). Stateless — no data-directory involvement, unlike storage/
 // files — each call is an independent request. Async, unlike the sync
@@ -147,15 +281,25 @@ fn files_delete(
 // a task on Tauri's own existing runtime, where reqwest::blocking would
 // panic trying to start a nested runtime from within one — see
 // agent-docs/capabilities/http/AGENTS.md.
+// Any method, headers, params and body — the SDK has already serialized
+// params and encoded the body (packages/sdk/src/http.ts).
 #[tauri::command]
-async fn http_get(url: String) -> Result<chain_core::http::HttpResponse, String> {
-    chain_core::http::get(&url).await.map_err(to_http_command_error)
+async fn http_request(request: chain_core::http::HttpRequest) -> Result<chain_core::http::HttpResponse, String> {
+    chain_core::http::request(request).await.map_err(to_http_command_error)
+}
+
+// responseType "bytes": one raw buffer (head JSON, then the body — see
+// chain_core::http::request_bytes), never a JSON number array.
+#[tauri::command]
+async fn http_request_bytes(request: chain_core::http::HttpRequest) -> Result<tauri::ipc::Response, String> {
+    chain_core::http::request_bytes(request).await.map(tauri::ipc::Response::new).map_err(to_http_command_error)
 }
 
 fn to_http_command_error(e: chain_core::http::HttpError) -> String {
     match e {
         chain_core::http::HttpError::InvalidUrl(m) => format!("INVALID_ARGUMENT: {m}"),
         chain_core::http::HttpError::Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        chain_core::http::HttpError::TooLarge(m) => format!("TOO_LARGE: {m}"),
         chain_core::http::HttpError::Other(m) => m,
     }
 }
@@ -364,14 +508,41 @@ fn to_process_runner_command_error(e: chain_core::process_runner::ProcessRunnerE
 // listener yet) before that id ever reached JS. Caller-supplied ids
 // close that race entirely — see packages/sdk/src/process-runner.ts's
 // comments.
+// One argv element: a plain string, or a `desktop.files` reference that's
+// replaced by that managed file's path here, so JS never sees it — see
+// process-runner/CONTRACT.md's "File-reference arguments".
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ProcessArg {
+    Text(String),
+    File {
+        #[serde(rename = "fileReference")]
+        file_reference: String,
+    },
+}
+
 #[tauri::command]
 fn process_runner_run(
     app: tauri::AppHandle,
     state: tauri::State<ProcessRunnerState>,
+    files_state: tauri::State<FilesState>,
     id: String,
     command: String,
-    args: Vec<String>,
+    args: Vec<ProcessArg>,
+    stdin: Option<String>,
 ) -> Result<(), String> {
+    // Resolved before anything spawns: an unknown reference rejects run()
+    // with NOT_FOUND and no process is ever started.
+    let args = args
+        .into_iter()
+        .map(|arg| match arg {
+            ProcessArg::Text(text) => Ok(text),
+            ProcessArg::File { file_reference } => {
+                with_files(&app, &files_state, |files| files.process_path(&file_reference))
+            }
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+
     let processes = Arc::clone(&state.processes);
     let processes_for_exit = Arc::clone(&processes);
     let app_for_output = app.clone();
@@ -381,6 +552,7 @@ fn process_runner_run(
     let handle = chain_core::process_runner::run(
         &command,
         &args,
+        stdin,
         move |chunk| {
             let stream = match chunk.stream {
                 chain_core::process_runner::ProcessStream::Stdout => "stdout",
@@ -416,6 +588,595 @@ fn process_runner_kill(state: tauri::State<ProcessRunnerState>, id: String) -> R
     Ok(())
 }
 
+// Bridges the models capability contract (capabilities/models in
+// chain-sdk). Data-only model packs live in a `models/` sibling of
+// `files/` in this app's data directory; engines get them by id and paths
+// never reach JS. Progress goes out as `chain://models-progress` events
+// keyed by model id (one install per id at a time).
+#[derive(Default)]
+struct ModelsState {
+    models: Mutex<Option<chain_core::models::Models>>,
+    installs: chain_core::models::Installs,
+}
+
+fn models_of(app: &tauri::AppHandle, state: &ModelsState) -> Result<chain_core::models::Models, String> {
+    let mut guard = state.models.lock().expect("models mutex poisoned");
+    if guard.is_none() {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        *guard = Some(chain_core::models::Models::open(&dir.join("models")).map_err(to_models_command_error)?);
+    }
+    Ok(guard.clone().expect("just initialized above"))
+}
+
+// The SDK maps these prefixes onto ChainErrorCode — see packages/sdk/src/models.ts.
+fn to_models_command_error(e: chain_core::models::ModelsError) -> String {
+    use chain_core::models::ModelsError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Integrity(m) => format!("INTEGRITY_FAILED: {m}"),
+        Cancelled => "CANCELLED: the install was cancelled".to_string(),
+        Other(m) => m,
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ModelsProgressPayload {
+    id: String,
+    received: u64,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+async fn models_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ModelsState>,
+    manifest: chain_core::models::ModelManifest,
+) -> Result<chain_core::models::InstalledModel, String> {
+    let models = models_of(&app, &state)?;
+    let ticket = state.installs.begin(&manifest.id).map_err(to_models_command_error)?;
+    let id = manifest.id.clone();
+    let download = models
+        .download(&manifest, &ticket, |received, total| {
+            let _ = app.emit("chain://models-progress", ModelsProgressPayload { id: id.clone(), received, total });
+        })
+        .await
+        .map_err(to_models_command_error)?;
+    tauri::async_runtime::spawn_blocking(move || models.install(download, &ticket))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+fn models_cancel(state: tauri::State<ModelsState>, id: String) {
+    state.installs.cancel(&id);
+}
+
+#[tauri::command]
+async fn models_list(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ModelsState>,
+) -> Result<Vec<chain_core::models::InstalledModel>, String> {
+    let models = models_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || models.list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+async fn models_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ModelsState>,
+    id: String,
+) -> Result<(), String> {
+    // Removing a model mid-install cancels that install first.
+    state.installs.cancel(&id);
+    let models = models_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || models.remove(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+// Bridges the tts capability contract (capabilities/tts in chain-sdk).
+// Real only when chain-core is built with its `tts` feature — apps opt in
+// with package.json "chain": { "gpl": true }, since it links espeak-ng
+// (GPL-3.0). Otherwise both commands reject UNSUPPORTED.
+fn to_tts_command_error(e: chain_core::sherpa::tts::TtsError) -> String {
+    use chain_core::sherpa::tts::TtsError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Cancelled => "CANCELLED: the compile was cancelled".to_string(),
+        Other(m) => m,
+    }
+}
+
+fn resolve_voice(
+    models: &chain_core::models::Models,
+    model_id: &str,
+    mut config: chain_core::sherpa::tts::TtsModelConfig,
+) -> Result<chain_core::sherpa::tts::TtsModelConfig, String> {
+    for file in config.files_mut() {
+        *file = models.resolve(model_id, file).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    }
+    for dir in config.dirs_mut() {
+        *dir = models.resolve_dir(model_id, dir).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    }
+    Ok(config)
+}
+
+#[tauri::command]
+async fn tts_voices(
+    app: tauri::AppHandle,
+    models_state: tauri::State<'_, ModelsState>,
+    model_id: String,
+    config: chain_core::sherpa::tts::TtsModelConfig,
+) -> Result<Vec<chain_core::sherpa::tts::Voice>, String> {
+    let config = resolve_voice(&models_of(&app, &models_state)?, &model_id, config)?;
+    tauri::async_runtime::spawn_blocking(move || chain_core::sherpa::tts::voices(&config))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_tts_command_error)
+}
+
+// Writes the WAV through the files capability and returns its reference,
+// so the app plays it with files.url() and deletes it like any other file.
+#[tauri::command]
+async fn tts_synthesize(
+    app: tauri::AppHandle,
+    files_state: tauri::State<'_, FilesState>,
+    models_state: tauri::State<'_, ModelsState>,
+    text: String,
+    model_id: String,
+    config: chain_core::sherpa::tts::TtsModelConfig,
+    voice: Option<i32>,
+    speed: Option<f32>,
+) -> Result<String, String> {
+    let config = resolve_voice(&models_of(&app, &models_state)?, &model_id, config)?;
+    let wav = tauri::async_runtime::spawn_blocking(move || {
+        chain_core::sherpa::tts::synthesize(&text, &config, voice.unwrap_or(0), speed.unwrap_or(1.0))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(to_tts_command_error)?;
+    with_files(&app, &files_state, |files| files.write(&wav, Some("wav")))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct TtsProgressPayload {
+    id: String,
+    fraction: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CompiledAudio {
+    file: String,
+    duration: f64,
+    segments: Vec<chain_core::sherpa::tts::SegmentTiming>,
+}
+
+// Encodes into a temp file and only moves it into files on success, so a
+// cancelled or failed compile leaves nothing behind. Progress goes out as
+// `chain://tts-progress` tagged with the caller's `id`, like speech's.
+#[tauri::command]
+async fn tts_compile(
+    app: tauri::AppHandle,
+    files_state: tauri::State<'_, FilesState>,
+    models_state: tauri::State<'_, ModelsState>,
+    id: String,
+    segments: Vec<String>,
+    model_id: String,
+    config: chain_core::sherpa::tts::TtsModelConfig,
+    voice: Option<i32>,
+    speed: Option<f32>,
+) -> Result<CompiledAudio, String> {
+    let config = resolve_voice(&models_of(&app, &models_state)?, &model_id, config)?;
+    // Our own name, never the caller's id: a call rejected UNAVAILABLE
+    // must not remove the running compile's file.
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let temp = std::env::temp_dir().join(format!("chain-tts-{}-{nanos}.m4a", std::process::id()));
+    let temp_for_job = temp.clone();
+    let app_for_job = app.clone();
+    let compiled = tauri::async_runtime::spawn_blocking(move || {
+        chain_core::sherpa::tts::compile(&segments, &config, voice.unwrap_or(0), speed.unwrap_or(1.0), &temp_for_job, |fraction| {
+            let _ = app_for_job.emit("chain://tts-progress", TtsProgressPayload { id: id.clone(), fraction });
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|result| result.map_err(to_tts_command_error));
+    let compiled = match compiled {
+        Ok(compiled) => compiled,
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp);
+            return Err(e);
+        }
+    };
+    let file = with_files(&app, &files_state, |files| files.adopt(&temp, Some("m4a")))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&temp);
+        })?;
+    Ok(CompiledAudio { file, duration: compiled.duration, segments: compiled.segments })
+}
+
+#[tauri::command]
+fn tts_cancel() {
+    chain_core::sherpa::tts::cancel_compile();
+}
+
+#[tauri::command]
+fn tts_set_idle_unload(ms: u64) -> Result<(), String> {
+    chain_core::sherpa::tts::set_idle_unload(ms).map_err(to_tts_command_error)
+}
+
+// Waits for a synthesize call in progress to finish, so not on the main thread.
+#[tauri::command]
+async fn tts_unload() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::sherpa::tts::unload)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_tts_command_error)
+}
+
+// Bridges the embeddings capability contract (capabilities/embeddings in
+// chain-sdk). Vectors go back as one raw buffer (chain_core::embeddings::
+// Embedded::to_bytes), never a JSON number array; the caller's `id` lets
+// embeddings_cancel stop that call alone.
+fn to_embeddings_command_error(e: chain_core::embeddings::EmbeddingsError) -> String {
+    use chain_core::embeddings::EmbeddingsError::*;
+    match e {
+        InvalidArgument(m) | InvalidModel(m) => format!("INVALID_ARGUMENT: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        OutOfMemory(m) => format!("TOO_LARGE: {m}"),
+        Cancelled => "CANCELLED: the embedding was cancelled".to_string(),
+        Other(m) => m,
+    }
+}
+
+fn resolve_embedding_model(
+    app: &tauri::AppHandle,
+    state: &ModelsState,
+    model_id: &str,
+    mut config: chain_core::embeddings::EmbeddingModelConfig,
+) -> Result<chain_core::embeddings::EmbeddingModelConfig, String> {
+    let models = models_of(app, state)?;
+    let tokenizer_model_id = config.tokenizer_model_id.as_deref().unwrap_or(model_id);
+    config.tokenizer = models.resolve(tokenizer_model_id, &config.tokenizer).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    config.model = models.resolve(model_id, &config.model).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    Ok(config)
+}
+
+#[tauri::command]
+fn embeddings_availability() -> chain_core::embeddings::Availability {
+    chain_core::embeddings::availability()
+}
+
+#[tauri::command]
+async fn embeddings_embed(
+    app: tauri::AppHandle,
+    models_state: tauri::State<'_, ModelsState>,
+    id: String,
+    texts: Vec<String>,
+    model_id: String,
+    config: chain_core::embeddings::EmbeddingModelConfig,
+    input: chain_core::embeddings::Input,
+    batch_size: Option<usize>,
+) -> Result<tauri::ipc::Response, String> {
+    let config = resolve_embedding_model(&app, &models_state, &model_id, config)?;
+    tauri::async_runtime::spawn_blocking(move || chain_core::embeddings::embed(&id, &texts, &config, input, batch_size))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|embedded| tauri::ipc::Response::new(embedded.to_bytes()))
+        .map_err(to_embeddings_command_error)
+}
+
+#[tauri::command]
+async fn embeddings_count_tokens(
+    app: tauri::AppHandle,
+    models_state: tauri::State<'_, ModelsState>,
+    texts: Vec<String>,
+    model_id: String,
+    mut config: chain_core::embeddings::EmbeddingModelConfig,
+    input: Option<chain_core::embeddings::Input>,
+) -> Result<chain_core::embeddings::TokenCounts, String> {
+    let tokenizer_model_id = config.tokenizer_model_id.clone().unwrap_or(model_id);
+    config.tokenizer = models_of(&app, &models_state)?
+        .resolve(&tokenizer_model_id, &config.tokenizer)
+        .map_err(to_models_command_error)?
+        .to_string_lossy()
+        .into_owned();
+    tauri::async_runtime::spawn_blocking(move || chain_core::embeddings::count_tokens(&texts, &config, input))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_embeddings_command_error)
+}
+
+#[tauri::command]
+fn embeddings_cancel(id: String) {
+    chain_core::embeddings::cancel(&id);
+}
+
+// Waits for the batch in progress, so not on the main thread.
+#[tauri::command]
+async fn embeddings_unload() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::embeddings::unload).await.map_err(|e| e.to_string())
+}
+
+// Bridges the audio-recorder capability contract (capabilities/audio-recorder
+// in chain-sdk). Levels go out as `chain://audio-recorder-level` tagged
+// with the caller's `id`; the finished temp file moves into files on stop.
+fn to_audio_recorder_command_error(e: chain_core::audio_recorder::RecorderError) -> String {
+    use chain_core::audio_recorder::RecorderError::*;
+    match e {
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Failed(m) => m,
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AudioRecorderLevelPayload {
+    id: String,
+    level: f32,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AudioRecorderMicrophonePayload {
+    id: String,
+    change: chain_core::audio_recorder::MicrophoneChange,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinishedRecording {
+    file: String,
+    mime_type: &'static str,
+    duration_ms: u64,
+}
+
+#[tauri::command]
+async fn audio_recorder_availability() -> Result<chain_core::audio_recorder::Availability, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::availability).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn audio_recorder_microphones() -> Result<Vec<chain_core::audio_recorder::Microphone>, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::microphones).await.map_err(|e| e.to_string())
+}
+
+// Blocks while the OS asks for permission, so not on the main thread.
+// Levels go out as `chain://audio-recorder-level`, microphone switches as
+// `chain://audio-recorder-microphone`, both tagged with the caller's `id`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn audio_recorder_start(
+    app: tauri::AppHandle,
+    id: String,
+    source: chain_core::audio_recorder::Source,
+    microphone: Option<String>,
+    avoid_bluetooth_microphone: bool,
+    echo_cancellation: bool,
+    noise_suppression: bool,
+    auto_gain_control: bool,
+) -> Result<chain_core::audio_recorder::Started, String> {
+    let choice = chain_core::audio_recorder::MicrophoneChoice { id: microphone, avoid_bluetooth: avoid_bluetooth_microphone };
+    let processing =
+        chain_core::audio_recorder::Processing { echo_cancellation, noise_suppression, auto_gain_control };
+    let switches = (app.clone(), id.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        chain_core::audio_recorder::start(
+            source,
+            choice,
+            processing,
+            move |level| {
+                let _ = app.emit("chain://audio-recorder-level", AudioRecorderLevelPayload { id: id.clone(), level });
+            },
+            move |change| {
+                let (app, id) = &switches;
+                let _ = app.emit("chain://audio-recorder-microphone", AudioRecorderMicrophonePayload { id: id.clone(), change });
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+fn audio_recorder_pause() -> Result<(), String> {
+    chain_core::audio_recorder::pause().map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+fn audio_recorder_resume() -> Result<(), String> {
+    chain_core::audio_recorder::resume().map_err(to_audio_recorder_command_error)
+}
+
+#[tauri::command]
+async fn audio_recorder_stop(
+    app: tauri::AppHandle,
+    files_state: tauri::State<'_, FilesState>,
+) -> Result<FinishedRecording, String> {
+    let finished = tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::stop)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_audio_recorder_command_error)?;
+    let file = with_files(&app, &files_state, |files| files.adopt(&finished.path, Some("m4a"))).inspect_err(|_| {
+        let _ = std::fs::remove_file(&finished.path);
+    })?;
+    Ok(FinishedRecording { file, mime_type: "audio/mp4", duration_ms: finished.duration_ms })
+}
+
+#[tauri::command]
+async fn audio_recorder_cancel() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(chain_core::audio_recorder::cancel).await.map_err(|e| e.to_string())
+}
+
+// Bridges the speech capability contract (capabilities/speech in
+// chain-sdk). The audio is a `desktop.files` reference resolved to its
+// path here — an hour of audio never crosses IPC. Progress goes out as
+// `chain://speech-progress` events tagged with the caller-supplied `id`,
+// same reasoning process_runner_run's ids use: the SDK listens before it
+// invokes. chain_core::speech allows one transcription at a time.
+#[derive(Clone, serde::Serialize)]
+struct SpeechProgressPayload {
+    id: String,
+    fraction: f64,
+}
+
+fn to_speech_command_error(e: chain_core::speech::SpeechError) -> String {
+    use chain_core::speech::SpeechError::*;
+    match e {
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
+        Cancelled => "CANCELLED: the transcription was cancelled".to_string(),
+        Other(m) => m,
+    }
+}
+
+// `engine` picks an installed sherpa-onnx model instead of the OS
+// recognizer; its file names are resolved inside the model here.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeechEngine {
+    model_id: String,
+    config: chain_core::sherpa::AsrModelConfig,
+    vad: SpeechVad,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeechVad {
+    model_id: String,
+    model: String,
+}
+
+fn resolve_engine(models: &chain_core::models::Models, engine: SpeechEngine) -> Result<chain_core::sherpa::Engine, String> {
+    let mut asr = engine.config;
+    for file in asr.files_mut() {
+        *file = models.resolve(&engine.model_id, file).map_err(to_models_command_error)?.to_string_lossy().into_owned();
+    }
+    let vad_model = models.resolve(&engine.vad.model_id, &engine.vad.model).map_err(to_models_command_error)?;
+    Ok(chain_core::sherpa::Engine { asr, vad_model })
+}
+
+#[tauri::command]
+async fn speech_transcribe(
+    app: tauri::AppHandle,
+    files_state: tauri::State<'_, FilesState>,
+    models_state: tauri::State<'_, ModelsState>,
+    id: String,
+    reference: String,
+    locale: Option<String>,
+    engine: Option<SpeechEngine>,
+) -> Result<chain_core::speech::Transcript, String> {
+    let path = with_files(&app, &files_state, |files| files.process_path(&reference))?;
+    let engine = match engine {
+        Some(engine) => Some(resolve_engine(&models_of(&app, &models_state)?, engine)?),
+        None => None,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::Path::new(&path);
+        let progress = |fraction| {
+            let _ = app.emit("chain://speech-progress", SpeechProgressPayload { id: id.clone(), fraction });
+        };
+        match &engine {
+            Some(engine) => chain_core::speech::transcribe_with_engine(path, engine, locale.as_deref(), progress),
+            None => chain_core::speech::transcribe(path, locale.as_deref(), progress),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(to_speech_command_error)
+}
+
+#[tauri::command]
+fn speech_cancel() {
+    chain_core::speech::cancel();
+}
+
+#[tauri::command]
+async fn speech_locales() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::speech::locales)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_speech_command_error)
+}
+
+// Bridges the vision capability contract (capabilities/vision in
+// chain-sdk). The image arrives as the raw IPC body — not a JSON number
+// array, which would turn a 10 MB photo into ~40 MB of text — with the
+// options JSON in a header. Recognition runs on a blocking thread so a
+// large image never stalls Tauri's async runtime.
+#[derive(serde::Deserialize, Default)]
+struct VisionOptions {
+    languages: Option<Vec<String>>,
+    accurate: Option<bool>,
+}
+
+fn to_vision_command_error(e: chain_core::vision::VisionError) -> String {
+    use chain_core::vision::VisionError::*;
+    match e {
+        InvalidImage(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Other(m) => m,
+    }
+}
+
+#[tauri::command]
+async fn vision_recognize_text(
+    request: tauri::ipc::Request<'_>,
+) -> Result<chain_core::vision::RecognizedText, String> {
+    let (image, options) = vision_input(&request)?;
+    let options = chain_core::vision::RecognizeOptions {
+        languages: options.languages.unwrap_or_default(),
+        accurate: options.accurate.unwrap_or(true),
+    };
+    tauri::async_runtime::spawn_blocking(move || chain_core::vision::recognize_text(&image, &options))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_vision_command_error)
+}
+
+#[tauri::command]
+async fn vision_recognize_document(
+    request: tauri::ipc::Request<'_>,
+) -> Result<chain_core::vision::RecognizedDocument, String> {
+    let (image, options) = vision_input(&request)?;
+    let languages = options.languages.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || chain_core::vision::recognize_document(&image, &languages))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_vision_command_error)
+}
+
+fn vision_input(request: &tauri::ipc::Request<'_>) -> Result<(Vec<u8>, VisionOptions), String> {
+    let tauri::ipc::InvokeBody::Raw(image) = request.body() else {
+        return Err("INVALID_ARGUMENT: the image must be sent as raw bytes".to_string());
+    };
+    let options = match request.headers().get("chain-vision-options") {
+        Some(header) => serde_json::from_slice(header.as_bytes()).map_err(|e| format!("INVALID_ARGUMENT: {e}"))?,
+        None => VisionOptions::default(),
+    };
+    Ok((image.clone(), options))
+}
+
+#[tauri::command]
+async fn vision_languages() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(chain_core::vision::languages)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_vision_command_error)
+}
+
 // Callback target for the dev inspector's injected JS — see dev_inspector.rs.
 // Always registered (so `generate_handler!` below stays unconditional), but
 // only ever invoked when the `chain-dev-inspector` feature actually started
@@ -433,36 +1194,100 @@ fn __chain_inspector_report(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // So macOS asks for the microphone etc. as this app, not as the
+    // terminal that ran `chain dev` — see chain_core::dev_launch.
+    #[cfg(feature = "chain-dev-inspector")]
+    chain_core::dev_launch::become_responsible_for_itself();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
+        .on_page_load(release_abandoned_work)
         .manage(FilesState(Mutex::new(None)))
         .manage(AgentServerState::default())
         .manage(ProcessRunnerState::default())
+        .manage(ModelsState::default())
+        .manage(browser::BrowserState::default())
+        .register_uri_scheme_protocol("chain-browser", browser::protocol)
+        .manage(window::WindowState::default())
+        .on_window_event(window::on_window_event)
         .setup(|_app| {
+            window::setup(_app)?;
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
             dev_inspector::start(_app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(dev_inspector::traced(tauri::generate_handler![
             greet,
             get_platform_info,
             storage_migrate,
             storage_query,
             storage_execute,
+            storage_begin,
+            storage_commit,
+            storage_rollback,
             files_write,
             files_read,
             files_resolve_path,
             files_delete,
-            http_get,
+            files_pick,
+            files_save,
+            files_open,
+            files_reveal,
+            http_request,
+            http_request_bytes,
             agent_server_start,
             agent_server_stop,
             __chain_agent_server_respond,
             process_runner_run,
             process_runner_kill,
+            vision_recognize_text,
+            vision_recognize_document,
+            vision_languages,
+            speech_transcribe,
+            speech_cancel,
+            speech_locales,
+            models_install,
+            models_cancel,
+            models_list,
+            models_remove,
+            tts_voices,
+            tts_synthesize,
+            tts_compile,
+            tts_cancel,
+            tts_set_idle_unload,
+            tts_unload,
+            embeddings_availability,
+            embeddings_embed,
+            embeddings_count_tokens,
+            embeddings_cancel,
+            embeddings_unload,
+            audio_recorder_availability,
+            audio_recorder_microphones,
+            audio_recorder_start,
+            audio_recorder_pause,
+            audio_recorder_resume,
+            audio_recorder_stop,
+            audio_recorder_cancel,
+            browser::browser_availability,
+            browser::browser_open,
+            browser::browser_close,
+            browser::browser_set_buttons,
+            browser::browser_current,
+            browser::browser_read,
+            browser::browser_fetch,
+            browser::browser_clear_session,
+            window::window_availability,
+            window::window_options,
+            window::window_set_options,
+            window::window_insets,
+            window::window_is_full_screen,
+            window::window_set_drag_regions,
+            window::window_start_drag,
+            window::window_title_bar_double_click,
             __chain_inspector_report
-        ])
+        ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

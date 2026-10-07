@@ -1,0 +1,16 @@
+{
+  "name": "audio-recorder",
+  "description": "Native audio recording from the microphone, the computer's own output, or both mixed, streamed to an AAC file.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/audio-recorder/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "./native";
 
 import type { PlatformApi, PlatformInfo } from "./contracts/platform";
 import { chainError } from "./errors";

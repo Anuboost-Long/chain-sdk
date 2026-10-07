@@ -4,8 +4,9 @@ A plan for a public-facing docs website explaining Chain's framework
 pieces and capabilities to people who want to *use* the framework in
 their own app — a different audience from `agent-docs/`, which is
 written for an AI agent (or a maintainer) extending Chain itself. This
-document is the plan; the site doesn't exist yet. No implementation has
-started.
+document is the plan. **Status:** built in `site/` with Next.js (the
+stack the team chose over the options below); phases 1–3 and the Contributing page are done (no FAQ yet, no hosting yet) —
+see `agent-docs/framework/site/README.md`.
 
 ## Why this needs to be a separate thing from `agent-docs/`
 
@@ -116,7 +117,12 @@ don't build the heavier mitigation speculatively):
    phase 2+, not launch-blocking: hand-copied signatures are fine to
    start with as long as (1) above catches renames in practice.
 
-## Tech stack — recommendation, not yet decided
+## Tech stack — decided: Next.js
+
+The team chose Next.js (App Router, static export). The comparison
+below is kept for the record.
+
+### Options considered
 
 This is a real decision worth naming explicitly rather than defaulting
 into. Chain is a TypeScript/Rust monorepo already on npm workspaces, and

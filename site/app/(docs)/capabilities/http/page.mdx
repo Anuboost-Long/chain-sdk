@@ -1,0 +1,92 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Http",
+  description: "desktop.http: fetch a page from any origin from native code, without CORS getting in the way."
+};
+
+# Http
+
+<div className="lead">
+  Fetch a web page from any site. The request is made from native code, outside the webview, so ordinary sites that
+  don't send CORS headers still work.
+</div>
+
+<PlatformSupport name="http" />
+
+## Why not `fetch()`?
+
+Your app's UI runs in a webview with its own origin. A `fetch()` to another site is a cross-origin request, and most
+ordinary pages don't send the `Access-Control-Allow-Origin` header a browser requires, so the request is blocked.
+`desktop.http.get()` makes the request natively, where browser origin rules don't apply.
+
+## Example
+
+Import a page's title and headings from a URL the user pastes:
+
+```ts title="src/lib/import-page.ts"
+import { desktop, type ChainError, type HttpError } from "@chain/sdk";
+
+export async function importPage(url: string) {
+  let response;
+  try {
+    response = await desktop.http.get(url);
+  } catch (e) {
+    const error = e as ChainError;
+    if (error.code === "INVALID_ARGUMENT") throw new Error("That doesn't look like a web address. Check the URL.");
+    if (error.code === "UNAVAILABLE") throw new Error("Couldn't reach that site. Check your connection.");
+    if (error.code === "HTTP_ERROR") {
+      const { status } = (e as HttpError).response;
+      throw new Error(`The site answered with status ${status}. Check that the page exists.`);
+    }
+    throw e;
+  }
+
+  const doc = new DOMParser().parseFromString(response.body, "text/html");
+  return {
+    title: doc.title,
+    headings: [...doc.querySelectorAll("h1, h2, h3")].map((h) => h.textContent?.trim() ?? "")
+  };
+}
+```
+
+## API
+
+<ContractSource name="http" />
+
+### `get(url)`
+
+Makes a GET request and resolves once any response arrives:
+
+| Field    | Meaning                                                                     |
+| -------- | --------------------------------------------------------------------------- |
+| `status` | The HTTP status code of the final response.                                 |
+| `ok`     | `true` when `status` is 200–299, the same meaning as `fetch()`'s `Response.ok`. |
+| `body`   | The response body as text.                                                  |
+
+## Behavior
+
+- **Error statuses reject, like axios.** A status outside 200–299 rejects with `HTTP_ERROR`, and the response is on
+  `error.response`, so you can still read its status, headers, and body. To handle statuses yourself, pass
+  `validateStatus`: `get(url, { validateStatus: () => true })` resolves every response.
+- **Redirects are followed automatically.** You only see the final response, not the redirect chain.
+- **Every call makes a fresh request.** Nothing is cached.
+- **A fixed timeout applies,** so a stalled connection can't hang your app.
+- **The whole body is loaded into one string.** Fine for web pages, not meant for large downloads.
+
+## Errors
+
+| Code               | When                                                                         |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `HTTP_ERROR`       | The server answered with a status `validateStatus` refuses (by default, outside 200–299). `response` holds the response. |
+| `INVALID_ARGUMENT` | The URL is malformed, or isn't `http` or `https`. Nothing is sent.           |
+| `UNAVAILABLE`      | The server couldn't be reached: DNS failure, connection refused, or timeout. |
+| `NATIVE_FAILURE`   | Anything else, like a TLS handshake failure. `message` has the details.      |
+| `UNSUPPORTED`      | Called outside a Chain app.                                                  |
+
+## Not included
+
+- **GET only.** No POST, PUT, or DELETE.
+- **No custom headers, cookies, or sessions.** Every request is anonymous, so pages behind a login aren't reachable.
+- **No response headers.** Only `status`, `ok`, and `body`.
+- **No streaming, caching, or rate limiting.** Don't flood a site with requests; nothing will stop you.

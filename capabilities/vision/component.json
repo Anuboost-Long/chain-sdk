@@ -1,0 +1,16 @@
+{
+  "name": "vision",
+  "description": "On-device text recognition (OCR) for an image's bytes.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/vision/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

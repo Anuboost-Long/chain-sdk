@@ -1,10 +1,12 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "./native";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  ProcessArg,
   ProcessExit,
   ProcessHandle,
   ProcessOutputHandler,
+  ProcessRunOptions,
   ProcessRunnerApi
 } from "./contracts/process-runner";
 import { chainError } from "./errors";
@@ -86,7 +88,12 @@ function generateProcessId(): string {
 }
 
 export const processRunner: ProcessRunnerApi = {
-  async run(command: string, args: string[], onOutput: ProcessOutputHandler): Promise<ProcessHandle> {
+  async run(
+    command: string,
+    args: ProcessArg[],
+    onOutput: ProcessOutputHandler,
+    options?: ProcessRunOptions
+  ): Promise<ProcessHandle> {
     requireTauri("run");
 
     // Listener attached, and this id registered in `pending`, *before*
@@ -107,7 +114,7 @@ export const processRunner: ProcessRunnerApi = {
     pending.set(id, { onOutput, resolveExit: exitResolve });
 
     try {
-      await invoke<void>("process_runner_run", { id, command, args });
+      await invoke<void>("process_runner_run", { id, command, args, stdin: options?.stdin });
     } catch (error) {
       pending.delete(id);
       throw toChainError(error, "processRunner.run() failed");

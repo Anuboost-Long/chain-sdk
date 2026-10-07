@@ -29,28 +29,36 @@ function App() {
   }, []);
 
   return (
-    <main className="playground">
-      <header>
-        <img src={chainIcon} width="32" height="32" alt="" />
-        <h1>Chain Playground</h1>
-        <p className="subtitle">
-          The framework's internal proof app — not a real product. See <code>AGENTS.md</code> before
-          adding anything here.
-        </p>
-      </header>
+    <>
+      {/* desktop.window: package.json's "chain.window" runs the page under
+          the title bar; this bar drags the window and leaves room for its buttons. */}
+      <div className="title-bar" data-chain-drag-region>
+        <span>Drag here</span>
+        <button type="button">Still clickable</button>
+      </div>
+      <main className="playground">
+        <header>
+          <img src={chainIcon} width="32" height="32" alt="" />
+          <h1>Chain Playground</h1>
+          <p className="subtitle">
+            The framework's internal proof app — not a real product. See <code>AGENTS.md</code> before
+            adding anything here.
+          </p>
+        </header>
 
-      <ol className={`layers layers--${status.kind}`}>
-        {LAYERS.map((layer) => (
-          <li key={layer}>{layer}</li>
-        ))}
-      </ol>
+        <ol className={`layers layers--${status.kind}`}>
+          {LAYERS.map((layer) => (
+            <li key={layer}>{layer}</li>
+          ))}
+        </ol>
 
-      <section className={`result result--${status.kind}`}>
-        {status.kind === "loading" && <span>Calling desktop.platform.getInfo()…</span>}
-        {status.kind === "ready" && <PlatformTable info={status.info} />}
-        {status.kind === "error" && <pre>{status.message}</pre>}
-      </section>
-    </main>
+        <section className={`result result--${status.kind}`}>
+          {status.kind === "loading" && <span>Calling desktop.platform.getInfo()…</span>}
+          {status.kind === "ready" && <PlatformTable info={status.info} />}
+          {status.kind === "error" && <pre>{status.message}</pre>}
+        </section>
+      </main>
+    </>
   );
 }
 

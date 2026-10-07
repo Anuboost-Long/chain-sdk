@@ -32,7 +32,8 @@ Possible package:
 Used by:
 
 - Mneme (real consumer — requested it; see
-  `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo)
+  `docs/chain-sdk-requests/01-local-storage.md` in the mneme repo, and
+  `26-typed-queries.md` for `table()`/`transaction()`)
 
 Generalizable:
 Yes — SQLite-backed local storage is a near-universal desktop-app need,
@@ -159,7 +160,9 @@ as Platform/System)
 Used by:
 
 - Mneme (real consumer — requested it; see
-  `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo)
+  `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo,
+  plus `12-process-runner-stdin.md` for the one-shot `options.stdin`
+  payload)
 
 Generalizable:
 Yes — spawning a named executable with an argv array and streaming its
@@ -193,3 +196,233 @@ candidate fixes are documented there, none chosen yet
 Possible package:
 `@chain/sdk` (bundled in core, not a separate package — same reasoning
 as Platform/System)
+
+## Microphone
+
+Used by:
+mneme (request 18 — Phase 16 "Audio Recording": record lectures and
+notes in the page editor)
+
+Generalizable:
+Yes — any app that records audio needs the OS declaration; the recording
+itself is the web platform's
+
+Contract:
+Draft (`agent-docs/capabilities/microphone/CONTRACT.md`; no `contract.ts` —
+there's no JS API, only the `package.json` "chain.permissions.microphone"
+declaration)
+
+macOS:
+Implemented and verified in a bundled playground build: TCC prompt, then
+an AAC `audio/mp4` recording with pause/resume stored through
+`desktop.files`
+
+Windows:
+Not verified — WebView2 is expected to show its own prompt; see
+`agent-docs/capabilities/microphone/research/WINDOWS.md`
+
+Possible package:
+None — CLI build-time declaration plus web APIs
+
+## Vision
+
+Used by:
+mneme (request 20 — Phase 15 "OCR": "Extract text" on image blocks and
+chat attachments)
+
+Generalizable:
+Yes — exact on-device text extraction from an image is useful to any app
+that handles screenshots or photos; nothing in it knows about mneme
+
+Contract:
+Draft (`agent-docs/capabilities/vision/CONTRACT.md`,
+`capabilities/vision/contract.ts`)
+
+macOS:
+Implemented with Vision's `VNRecognizeTextRequest` (objc2 bindings) and
+verified in `apps/playground` across five image formats, rotation,
+language selection and both error paths
+
+Windows:
+Written against `Windows.Media.Ocr` (the `windows` crate) and
+compile-checked, not yet run — see
+`agent-docs/capabilities/vision/research/WINDOWS.md`
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Speech
+
+Used by:
+mneme (request 19 — Phase 17 "Speech-to-Text": transcribe recordings,
+then clean up and summarize the text with its existing AI actions)
+
+Generalizable:
+Yes — on-device transcription of stored audio fits any note-taking,
+meeting or media app; it knows nothing about lectures
+
+Contract:
+Draft (`agent-docs/capabilities/speech/CONTRACT.md`,
+`capabilities/speech/contract.ts`)
+
+macOS:
+Implemented. macOS 26+ uses SpeechAnalyzer through a Swift bridge
+(verified end to end, including an hour-long file); older macOS falls
+back to on-device `SFSpeechRecognizer` (partly verified)
+
+Windows:
+Not started — `UNSUPPORTED`; see
+`agent-docs/capabilities/speech/research/WINDOWS.md`
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Models
+
+Used by:
+mneme (request 21 — Settings → Extensions: optional open-source speech
+models the user downloads and removes)
+
+Generalizable:
+Yes — verified, sandboxed download of data packs for bundled engines fits
+any app offering optional on-device AI
+
+Contract:
+Draft (`agent-docs/capabilities/models/CONTRACT.md`,
+`capabilities/models/contract.ts`)
+
+macOS:
+Implemented and verified end to end (install, cancel, integrity failure,
+engine transcription of an hour-long lecture)
+
+Windows:
+Engine archive pinned, never built or run there
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Tts
+
+Used by:
+mneme (request 21 part 2 — read-aloud with downloadable Kokoro/Piper voices)
+
+Generalizable:
+Yes, for apps that can accept GPL-3.0 — which is why it's a per-app opt-in
+(`"chain": { "gpl": true }`), never a default
+
+Contract:
+Draft (`agent-docs/capabilities/tts/CONTRACT.md`, `capabilities/tts/contract.ts`)
+
+macOS:
+Implemented and verified end to end (Kokoro multi-lang v1.0, Piper)
+
+Windows:
+Archive pinned, never built
+
+Possible package:
+`@chain/sdk` (bundled in core; engine behind a Cargo feature)
+
+## AudioRecorder
+
+Used by:
+mneme (request 32 — record lectures, calls and videos the laptop plays,
+alone or with the microphone; request 33 — cancel the speakers' echo
+from the microphone when recording both; request 34 — noise
+suppression and gain control on the microphone; request 35 — choose the
+microphone, avoid Bluetooth headset mics)
+
+Generalizable:
+Yes — any app that records meetings, lectures or its own demos
+
+Contract:
+Draft (`agent-docs/capabilities/audio-recorder/CONTRACT.md`, `capabilities/audio-recorder/contract.ts`)
+
+macOS:
+Implemented (Core Audio process tap + aggregate device, macOS 14.2+ for
+system audio); verified end to end except the refusal path. Echo
+cancellation (SpeexDSP, platform-independent Rust/C) verified live on
+laptop speakers; noise suppression and gain control (same library)
+unit-tested
+
+Windows:
+Not started — WASAPI loopback plan in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Browser
+
+Used by:
+mneme (request 36 — sign in to a school LMS behind single sign-on and
+import the page the student is on, with its login-protected pictures)
+
+Generalizable:
+Yes — any app that reads content behind a login the user holds (LMS,
+intranets, research databases) without handling credentials
+
+Contract:
+Draft (`agent-docs/capabilities/browser/CONTRACT.md`, `capabilities/browser/contract.ts`)
+
+macOS:
+Implemented on Tauri's multi-webview window (`unstable` feature) with a
+`WKWebsiteDataStore(forIdentifier:)` per session, macOS 14+; verified in
+the playground against a local test site (see CAPABILITY_MATRIX.md)
+
+Windows:
+Same code through WebView2 (a user-data folder per session); compiles,
+never run — checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Embeddings
+
+Used by:
+mneme (request 37 — search by meaning: index each page's passages on the
+device, "By meaning" results in ⌘P, a `search_by_meaning` tool for Ask)
+
+Generalizable:
+Yes — any app with semantic search, deduplication or clustering over the
+user's own text, without sending it anywhere
+
+Contract:
+Draft (`agent-docs/capabilities/embeddings/CONTRACT.md`, `capabilities/embeddings/contract.ts`)
+
+macOS:
+Implemented on the ONNX Runtime 1.28.2 inside sherpa-onnx's static
+archive (C API, no second runtime) and the `tokenizers` crate; verified
+against reference vectors and end to end in the playground
+
+Windows:
+Same code and runtime; never built — checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Window
+
+Used by:
+mneme (request 38 — run its dark nav bar to the top of the window with
+the window buttons on it, instead of under macOS 27's solid title bar)
+
+Generalizable:
+Yes — every desktop app with its own top bar (the Notion/Linear/VS Code
+look), and any app that wants its window colours right before the page
+paints
+
+Contract:
+Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contract.ts`)
+
+macOS:
+Implemented: objc2 property sets in `crates/core/src/window.rs`, a Swift
+drag view, toolbar-backed bar sizes and button placer in
+`crates/core/swift/ChainWindow.swift`; verified in the playground
+
+Windows:
+Portable subset through Tauri calls (hidden = no frame, theme,
+background, drag, full screen); overlay falls back; never run —
+checklist in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+

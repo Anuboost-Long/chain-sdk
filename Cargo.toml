@@ -1,3 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/core", "apps/playground/src-tauri"]
+
+# Full debug info for Tauri's ~400 dependencies roughly doubles target/
+# (2.5 GB → 1.4 GB measured). Our own code keeps file:line in backtraces.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

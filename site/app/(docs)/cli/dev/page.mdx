@@ -1,0 +1,72 @@
+export const metadata = {
+  title: "chain dev",
+  description: "Run a Chain app with hot reload and condensed, readable output."
+};
+
+# chain dev
+
+<div className="lead">
+  Run your app in a native window with hot reload, and see a short status log instead of hundreds of compiler lines.
+</div>
+
+```bash
+chain dev
+```
+
+Run it inside your app, or use `npm run dev`, which does the same thing.
+
+## Example
+
+```text
+$ npm run dev
+
+⛓  chain dev
+
+  r restart   v verbose   q quit
+
+  Frontend   →  starting…
+  Frontend   ●  http://localhost:1420/
+  Native     →  compiling serde (12 crates)
+  Native     →  compiling tauri (318 crates)
+  Native     ●  built
+  Native     ●  running
+```
+
+One line per real change, not one per compiled crate.
+
+Save a file under `src/` and the window updates. Change Rust code in `.chain/native/` and the native side rebuilds and
+relaunches.
+
+## Keyboard shortcuts
+
+| Key          | Action                                                     |
+| ------------ | ---------------------------------------------------------- |
+| `r`          | Restart everything: the web server, the build, the window. |
+| `v`          | Toggle verbose output, to see every line the tools print.  |
+| `q`, Ctrl+C  | Quit, and close the window and web server with it.         |
+
+Shortcuts only work in an interactive terminal. In CI or a task runner, `chain dev` prints the same log and exits with
+the app's own exit code.
+
+## Behavior
+
+- **Errors are never hidden.** Warnings and errors are printed in full, with their code snippets. If the build fails,
+  the last error is repeated at the end so it isn't lost in the scroll.
+- **Quitting cleans up.** `q`, Ctrl+C, and closing the terminal all stop the whole process tree, so no leftover web
+  server holds the port for your next run.
+- **Build output is shared between apps.** Native builds go to one cache folder for all your Chain apps
+  (`~/Library/Caches/chain/target` on macOS, the standard cache folder on Linux and Windows), so the second app you
+  create compiles in seconds and takes a few hundred megabytes instead of another gigabyte. Deleting that folder is
+  safe; the next run rebuilds it, and [chain clean](/cli/clean/) does it for you. Set `CARGO_TARGET_DIR` yourself to
+  use a different location. If the cache passes 8 GB, `chain dev` says so in one line when it starts.
+- **Dev builds include an automation bridge** for [chain inspect](/cli/inspect/). It's left out of release builds
+  entirely.
+- **Extra arguments pass through** to `tauri dev`, for example `chain dev -- --release`.
+
+## Troubleshooting
+
+**`Port 1420 is already in use`.** Another app's dev server is running. Stop it, or quit the other `chain dev` with
+`q`.
+
+**The first run is slow.** The first build compiles the native side, which takes a few minutes. Later runs only rebuild
+what changed.

@@ -1,0 +1,16 @@
+{
+  "name": "models",
+  "description": "Download, verify, list and remove data-only model packs that bundled engines run by id.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/models/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

@@ -9,6 +9,11 @@ export function nativeProjectDir(cwd: string): string {
   return path.join(cwd, ".chain/native");
 }
 
+/** taskkill by absolute path, so a `taskkill` earlier on PATH can't stand in for it. */
+export function taskkillPath(): string {
+  return path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "taskkill.exe");
+}
+
 export function resolveTauriBin(cwd: string): string {
   const bin = process.platform === "win32" ? "tauri.cmd" : "tauri";
   return path.join(cwd, "node_modules", ".bin", bin);
@@ -51,6 +56,24 @@ export function tauriEnv(cwd: string): NodeJS.ProcessEnv {
     FORCE_COLOR: "1",
     TAURI_APP_PATH: nativeProjectDir(cwd)
   };
+}
+
+/** One Cargo target dir for every Chain app's `chain dev` builds on this
+ * machine — the ~1 GB of compiled Tauri dependencies is identical across
+ * apps, so each extra app only adds its own crate instead of another full
+ * copy (same idea as Electron's shared Chromium download cache). A plain
+ * build cache: deleting it only costs a rebuild. `chain build` keeps its
+ * own target/ so release bundles land inside the app. */
+export function sharedDevTargetDir(): string {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Caches", "chain", "target");
+  }
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    return path.join(localAppData, "chain", "cache", "target");
+  }
+  const cacheHome = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(cacheHome, "chain", "target");
 }
 
 /**

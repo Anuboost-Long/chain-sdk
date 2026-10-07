@@ -1,0 +1,150 @@
+export const metadata = {
+  title: "chain migration",
+  description: "Generate SQLite migrations from your schema classes, like dotnet ef migrations."
+};
+
+# chain migration
+
+<div className="lead">
+  Declare your database as classes. When you change them, <code>chain migration add</code> writes the migration for
+  you: the SQL to apply the change and the SQL to undo it. It works like EF Core's <code>dotnet ef migrations</code>.
+</div>
+
+```bash
+chain migration add <name>          # generate a migration from your changes
+chain migration add <name> --empty  # an empty one to write by hand
+chain migration remove              # delete the latest, if not applied locally
+chain migration list                # every migration and whether it has run
+chain migration script [from] [to]  # print the SQL between two versions
+chain migration check               # fail if classes have unmigrated changes
+```
+
+Run them inside your app.
+
+## Example
+
+Describe a table as a class in `src/lib/db/schema/`:
+
+```ts title="src/lib/db/schema/note.ts"
+import { PrimaryKey, Table } from "@chain/sdk/schema";
+
+@Table()
+export class Note {
+  @PrimaryKey({ autoIncrement: true }) id!: number;
+  title!: string;
+  body!: string | null;
+}
+```
+
+```text
+$ chain migration add create-notes
+Created src/lib/db/migrations/0001-create-notes.ts (version 1):
+  CREATE TABLE "note"
+
+Saved the resulting schema to 0001-create-notes.model.json.
+```
+
+Later, change the class: rename `body` to `content`, index `title`, and add two columns:
+
+```ts title="src/lib/db/schema/note.ts"
+import { Column, Index, PrimaryKey, Table } from "@chain/sdk/schema";
+
+@Table()
+export class Note {
+  @PrimaryKey({ autoIncrement: true }) id!: number;
+  @Index() title!: string;
+  content!: string | null;
+  @Column({ defaultSql: "datetime('now')" }) created_at!: string;
+  pinned!: boolean;
+}
+```
+
+```text
+$ chain migration add note-details
+In `note`, did you rename column `body` to `content`? [y/N] y
+Created src/lib/db/migrations/0002-note-details.ts (version 2):
+  -- Rebuild "note" (add created_at, add pinned, rename body → content): SQLite can't do this with ALTER TABLE.
+  CREATE TABLE "__chain_new_note"
+  DROP TABLE "note";
+  ALTER TABLE "__chain_new_note" RENAME TO "note";
+  CREATE INDEX "idx_note_title" ON "note" ("title");
+
+Review before shipping — these can lose or change data:
+  ! New NOT NULL column note.pinned has no default; existing rows get 0.
+```
+
+The generated file holds both directions:
+
+```ts title="src/lib/db/migrations/0002-note-details.ts"
+export const noteDetails: Migration = {
+  version: 2,
+  name: "note-details",
+  sql: `BEGIN; … COMMIT;`,   // applies the change, keeping every row
+  down: `BEGIN; … COMMIT;`,  // restores version 1's shape
+};
+```
+
+Apply it with [chain database update](/cli/database/), or just start the app: `initDb()` runs pending migrations.
+
+## Declaring the schema
+
+Every property of a `@Table` class is a column. Its TypeScript type decides the SQLite type, the way EF uses C# types:
+
+| Property type                   | Column                                    |
+| ------------------------------- | ----------------------------------------- |
+| `string`                        | `TEXT NOT NULL`                           |
+| `number`, `boolean`, `bigint`   | `INTEGER NOT NULL`                        |
+| `Uint8Array`                    | `BLOB NOT NULL`                           |
+| `… \| null`, or `prop?:`        | the same type, nullable                   |
+
+| Decorator                                                  | Does                                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| `@Table(name?, { checks?, unique? })`                      | Maps the class. The name defaults to snake_case: `AiAction` → `ai_action`. |
+| `@PrimaryKey({ autoIncrement? })`                          | The key. On several properties, a composite key. Without it, `id` is the key. |
+| `@Column({ type?, default?, defaultSql?, unique?, check?, name? })` | Column options. `type: "real"` for fractional numbers.            |
+| `@ForeignKey(() => Course, { onDelete?, onUpdate?, column? })` | References another class's table.                                  |
+| `@Index({ name?, unique?, where? })`                       | On a property: an index. On the class, with `columns`: a composite one. |
+| `@Trigger(name, sql)`                                      | A trigger on the table, as its full `CREATE TRIGGER` statement.   |
+| `@NotMapped()`                                             | Leaves a property out of the table.                                |
+
+The decorators do nothing when your app runs. The CLI reads the files with the TypeScript compiler instead, so decorator
+arguments must be plain literals. If something can't be read, the error names the file and line.
+
+The classes are also your row types:
+
+```ts
+const notes = await desktop.storage.query<Note>("SELECT * FROM note WHERE pinned = 1");
+```
+
+## How changes become SQL
+
+- **In place when SQLite allows it:** new tables, nullable columns or columns with a constant default, renames, drops,
+  indexes, and triggers.
+- **Anything else rebuilds the table** following SQLite's documented procedure: create the new shape, copy the rows,
+  swap it in, and recreate its indexes and triggers. Your data is kept.
+- **Renames are asked about.** A diff can't tell a rename from a drop plus an add, so `add` asks when a column or
+  table disappears and a similar one appears. In scripts, pass `--rename-column note.body=content` or
+  `--rename-table old=new`.
+- **Data-affecting steps are flagged.** Like EF, a new NOT NULL column with no default fills existing rows with
+  `''` or `0`, and a column becoming NOT NULL turns NULLs into that value. Each of these is listed when you run `add`
+  and at the top of the migration file.
+
+## Other commands
+
+- **`remove`** deletes the latest migration and its snapshot. If it's already applied to your local database, first
+  revert it with `chain database update <previous version>`.
+- **`list`** shows each migration as `applied`, `pending`, `changed` (edited after it ran here), or `missing` (applied,
+  but the file is gone).
+- **`script`** prints the SQL for a range, for reviewing or running elsewhere. With `from` greater than `to`, it
+  prints the down SQL.
+- **`check`** exits with status 1 when the classes have changes no migration covers. Run it in CI.
+
+## Behavior
+
+- **Each migration saves the schema it produced** as `NNNN-<name>.model.json`. The next `add` diffs against it.
+  Commit these files.
+- **Never edit a migration that has shipped.** Users' databases already ran it. Change the classes and add another.
+- **Some things can't be declared** as classes: views, expression indexes, generated columns, and composite foreign
+  keys. Manage them with `--empty` migrations.
+- **Already have hand-written migrations?** Run [chain database scaffold](/cli/database/#adopting-an-existing-app)
+  once to generate the classes from them.

@@ -1,0 +1,76 @@
+export const metadata = {
+  title: "chain database",
+  description: "Apply, revert, and list migrations against a Chain app's real database, and adopt existing ones."
+};
+
+# chain database
+
+<div className="lead">
+  Apply migrations to your app's real database file, roll back to an earlier version, or generate schema classes from
+  migrations you wrote by hand. It works like EF Core's <code>dotnet ef database</code> and <code>dbcontext scaffold</code>.
+</div>
+
+```bash
+chain database update            # apply every pending migration
+chain database update <target>   # go to a version or name, up or down
+chain database list              # same as chain migration list
+chain database scaffold          # generate schema classes from existing migrations
+```
+
+Run them inside your app.
+
+## Example
+
+```text
+$ chain database update
+Applied  0001 create-notes
+Applied  0002 note-details
+
+/Users/you/Library/Application Support/com.example.notes/app.db is now at version 2.
+
+$ chain database update 1
+Reverted 0002 note-details
+
+/Users/you/Library/Application Support/com.example.notes/app.db is now at version 1.
+
+$ chain migration list
+  applied  0001  create-notes  2026-09-28 09:14:02
+  pending  0002  note-details
+```
+
+The target can be a version number, a migration's name, or `0` to revert everything.
+
+## Adopting an existing app
+
+If your app already has migrations you wrote by hand, `scaffold` turns them into schema classes so `chain migration
+add` can take over:
+
+```text
+$ chain database scaffold
+Scaffolded 12 table classes into src/shared/lib/db/schema/ from 15 migrations.
+Saved the schema as of 0015-agent-message-attachments.ts to 0015-agent-message-attachments.model.json.
+
+From now on, change the classes and run `chain migration add <name>`.
+```
+
+It replays every migration into a temporary in-memory database, never your real one, reads the resulting tables back,
+and writes one class per table: columns, keys, defaults, checks, indexes, and triggers. Before saving, it checks that
+the classes read back as exactly the same schema. Your existing migrations stay as they are and nothing is re-run.
+
+If the schema folder already has files with the same names, `scaffold` stops and lists them; commit or move them,
+then rerun with `--force`.
+
+## Behavior
+
+- **It uses the real database,** the same file `desktop.storage` opens (on macOS,
+  `~/Library/Application Support/<app identifier>/app.db`).
+- **The app and the CLI keep the same history.** A migration applied by either one is skipped by the other. The
+  history records each migration's name and a checksum of its SQL, so `list` can show one that was edited after it ran.
+- **Going down needs a `down` script.** Generated migrations always have one. If a hand-written migration in the way
+  doesn't, `update` stops before changing anything.
+- **A failing migration is rolled back.** Earlier ones in the same run stay applied, and the error says which one
+  failed.
+- **Foreign keys can't cascade during a migration.** Enforcement is switched off while migrating and restored after,
+  so rebuilding a parent table never deletes child rows.
+- **It needs Node.js 22.18 or newer,** for its built-in TypeScript and SQLite support. Node prints a one-line
+  `ExperimentalWarning` about SQLite; that's expected.

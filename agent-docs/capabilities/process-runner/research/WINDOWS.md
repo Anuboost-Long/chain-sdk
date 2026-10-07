@@ -99,3 +99,20 @@ onOutput)` stays identical either way):
       just an intermediary shim layer, on whichever approach was chosen.
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and this
       capability's `component.json` once confirmed.
+
+## File-reference arguments on Windows (request 14) — not yet verified
+
+The reason `files` hides paths is Windows' `MAX_PATH` (260). A resolved
+managed-file path is `%APPDATA%\<identifier>\files\<16 hex>.<ext>` —
+normally far under 260, but a long user name or identifier could push
+it over. `Files::process_path` therefore returns the `\\?\`-prefixed
+extended-length form when the path is 260 characters or longer, which
+`CreateProcessW` passes through verbatim and most Win32-file-API-based
+programs accept.
+
+- [ ] Confirm a real CLI (e.g. `codex exec -i <path>`) opens a normal
+      managed-file path.
+- [ ] Force a ≥ 260-char path (long identifier) and confirm the `\\?\`
+      form is accepted by the same CLI; if a target CLI rejects `\\?\`,
+      document it here — the capability can't fix a child's own path
+      handling.

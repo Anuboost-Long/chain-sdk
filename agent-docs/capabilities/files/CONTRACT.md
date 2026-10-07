@@ -62,6 +62,77 @@ exist (already deleted, or never existed) resolves successfully rather
 than rejecting; the caller's intent ("this shouldn't exist anymore") is
 already satisfied.
 
+## `desktop.files.pick(options?)`
+
+```
+pick(options?: { multiple?: boolean; extensions?: string[] }):
+  Promise<{ name: string; size: number; bytes: Uint8Array }[]>
+```
+
+Shows the OS's own open-file picker and resolves with each chosen file's
+**name, size, and bytes** — never its path. Resolves `[]` if the user
+cancels. Driven by mneme's request 16: an `<input type="file">` in the
+webview opens as a free-floating app-modal window (wry calls
+`runModal()`), while this one is attached to the app window — a sheet on
+macOS, an owned dialog on Windows — and never blocks the UI thread while
+it's open.
+
+- `multiple` (default `false`) allows selecting more than one file.
+- `extensions` limits which files can be chosen (letters/digits, no
+  leading dot, like `write()`'s `extension`). Omitted or empty: any file.
+- Picking is only an OS-level action. Nothing is stored in the managed
+  directory; an app that wants to keep a picked file passes its bytes to
+  `write()`.
+- Only one picker at a time per app.
+
+## `desktop.files.save(bytes, options?)`
+
+```
+save(bytes: Uint8Array, options?: { suggestedName?: string; extensions?: string[] }):
+  Promise<{ name: string } | null>
+```
+
+The save counterpart of `pick()` (mneme request 17): shows the OS save
+panel attached to the app window (a sheet on macOS), and the **native
+side writes `bytes`** to the location the user chose. Resolves with the
+file name the user settled on — never the path — or `null` on cancel.
+
+- **Every call shows the panel.** Nothing is ever saved silently to a
+  remembered or default location, and there's no "don't ask again". The
+  panel may start in the folder the OS last used; the user confirms each
+  time. (The user's explicit requirement.)
+- `suggestedName` pre-fills the name field. Only its last path component
+  is used, so it can't pick a folder.
+- `extensions` works like `pick()`'s. If the user's name ends in none of
+  them, the first is appended.
+- Overwriting an existing file is confirmed by the panel's own "Replace?"
+  prompt; the capability adds nothing on top.
+- Shares `pick()`'s one-panel-at-a-time rule.
+
+## `desktop.files.open(reference)` and `desktop.files.reveal(reference)`
+
+Mneme request 25 (attachments). `open` opens the stored file in the OS
+default app for its type, as double-clicking it in Finder / File Explorer
+would (NSWorkspace on macOS, `ShellExecute` on Windows); `reveal` shows
+it selected in Finder / File Explorer (request 17's left-out half). Both
+resolve once the OS has accepted the request, not when the app finishes
+launching. Neither exposes the path.
+
+- The OS picks the app by the extension the file was written with
+  (`write(bytes, { extension })`). A file written without one opens in
+  whatever the OS uses for untyped data (TextEdit on macOS).
+- **`open` refuses types that run code** — apps, scripts, installers
+  (`.app`, `.command`, `.sh`, `.pkg`, `.exe`, `.bat`, `.ps1`, `.msi`,
+  `.lnk`, …; the list is `RUNS_CODE` in `crates/core/src/files.rs`) —
+  with `UNSUPPORTED`. Files the app stored carry no download quarantine,
+  so the OS wouldn't warn before running one; a file imported from the
+  web must not become one click from running. `reveal` still works for
+  them, leaving the choice to the user in Finder.
+- `NOT_FOUND` — an unknown, malformed or deleted reference.
+- `UNAVAILABLE` — no app on this computer opens that type (the message
+  names the extension).
+- `UNSUPPORTED` — a type that runs code (`open` only), or Linux.
+
 ## Errors
 
 - A `reference` that isn't a well-formed capability-generated id (or that
@@ -70,6 +141,13 @@ already satisfied.
 - Other I/O failures (disk full, permission denied by the OS, ...) reject
   with `ChainError { code: "NATIVE_FAILURE" }`, the underlying OS message
   in `message`.
+- `pick()`/`save()` reject with `ChainError { code: "INVALID_ARGUMENT" }`
+  if an `extensions` entry isn't letters/digits, and with `ChainError {
+  code: "UNAVAILABLE" }` if a picker or save panel is already open.
+  `save()` rejects with `NATIVE_FAILURE` (the OS message in `message`)
+  if writing to the chosen location fails. A picked file that can't
+  be read (removed or unreadable between choosing and reading) rejects
+  with `NATIVE_FAILURE`.
 - Calling any method outside a Chain (Tauri) runtime rejects with
   `ChainError { code: "UNSUPPORTED" }`, same as every other capability.
 
@@ -89,6 +167,13 @@ already satisfied.
 - No metadata (size, mime type, created-at) returned by any method — the
   consuming app already tracks whatever metadata it needs (mneme's
   `attachment.mime_type` column, for instance) at the app level.
+- `open` has no "open with…" choice of app and no way to open a type
+  that runs code; `reveal` shows one file, not a selection.
+- **`pick()` never returns a path, and has no folder
+  picking or "remember last folder" option** — only what request 16
+  needs. It also has no size limit or streaming: bytes are read whole
+  (mneme caps attachments before reading). Add any of these only when a
+  real app needs them.
 - No cross-file transaction/atomicity guarantees — each call is
   independent, same as `storage.execute()` before a transaction API
   exists there.

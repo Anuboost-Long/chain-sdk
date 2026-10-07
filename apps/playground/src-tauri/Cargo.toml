@@ -12,13 +12,13 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "playground_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "unstable"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,7 +27,7 @@ chain-core = { path = "../../../crates/core" }
 [features]
 # Only `chain dev` passes --features chain-dev-inspector; `chain build`
 # never does, so a release binary contains none of dev_inspector.rs.
-chain-dev-inspector = []
+chain-dev-inspector = ["chain-core/dev-trace"]
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

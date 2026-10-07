@@ -56,6 +56,24 @@ This is the scaffold produced by `chain init`:
   (`.chain/native/tauri.conf.json`'s `bundle.icon` already points there —
   no config change needed to use them).
 
+## Feature development workflow
+
+When implementing application features:
+
+1. Start from the application's roadmap or requirement.
+2. Create or update `docs/features/<feature>.md` before substantial implementation.
+3. Record the feature's intended behaviour, relevant source locations,
+   dependencies and acceptance criteria.
+4. Use only `@chain/sdk` for native/platform functionality.
+5. If a required Chain capability does not exist:
+   - create `docs/chain-sdk-requests/<request>.md`;
+   - describe what the application needs, not how Chain should implement it;
+   - hand the request to the Chain SDK maintainers;
+   - do not bypass Chain with Tauri, Rust or OS APIs.
+6. After Chain provides the capability, complete the application feature.
+7. Update the feature document with what actually shipped and which Chain
+   capability/request it depends on.
+
 ## Staying in sync with chain-sdk
 
 Run `chain update` from this app's root any time chain-sdk's templates

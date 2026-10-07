@@ -48,6 +48,47 @@ const backAgain = await desktop.files.read(reference);
 await desktop.files.delete(reference); // idempotent
 ```
 
+Let the user choose files with the OS picker, attached to the app window
+(a sheet on macOS) instead of `<input type="file">`'s free-floating
+panel. You get names and bytes, never paths; `[]` means cancelled:
+
+```ts
+const picked = await desktop.files.pick({ multiple: true, extensions: ["png", "pdf"] });
+for (const { name, size, bytes } of picked) {
+  const reference = await desktop.files.write(bytes, { extension: name.split(".").pop() });
+  // ...
+}
+```
+
+Save bytes where the user chooses (request 17). The panel appears on
+**every** call, attached to the window; native writes the file; you get
+the chosen name back, or `null` if cancelled:
+
+```ts
+const saved = await desktop.files.save(bytes, {
+  suggestedName: "mneme-backup-2026-09-28.json",
+  extensions: ["json"] // appended if the user's name has none of these
+});
+if (saved) showToast(`Backup saved as ${saved.name}.`);
+```
+
+Open an attachment the way Finder would, or show it in Finder:
+
+```ts
+const reference = await desktop.files.write(bytes, { extension: "pptx" });
+await desktop.files.open(reference);   // Keynote/PowerPoint; UNAVAILABLE if no app, UNSUPPORTED for .app/.exe/scripts
+await desktop.files.reveal(reference); // Finder / File Explorer, file selected
+```
+
+`files_open`/`files_reveal` are sync commands (Tauri runs them on the
+main thread) over `Files::open_in_app`/`reveal` in
+`crates/core/src/files.rs`: NSWorkspace (`objc2-app-kit`) on macOS,
+`ShellExecuteW` and `explorer.exe /select,` on Windows.
+
+`files_pick` is async and replies with raw bytes (u32 header length, a
+JSON `[{ name, size }]` header, then each file's bytes), decoded in
+`packages/sdk/src/files.ts` — JSON number arrays would be ~3.5× larger.
+
 Every already-scaffolded app gets this automatically via `chain update`
 (it's a tracked file in `packages/cli/templates/lib.rs`) — no manual
 wiring needed per app.

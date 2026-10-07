@@ -7,9 +7,8 @@ import { doctor } from "./doctor.js";
 import { update } from "./update.js";
 import { dev } from "./dev.js";
 import { build } from "./build.js";
+import { clean } from "./clean.js";
 import { inspect } from "./inspect.js";
-import { migration } from "./migration.js";
-import { database } from "./database.js";
 
 const cliDir = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(cliDir, "../package.json"), "utf8")) as {
@@ -40,18 +39,31 @@ Usage:
   chain update                Merge chain-sdk template changes into the
                                app in the current directory, preserving
                                your edits (run from inside the app).
-  chain migration <name>      Scaffold the next numbered SQLite migration
-                               file (db/migrations/000N-<name>.ts) and
-                               rewire its index. First use in an app sets
-                               up db/migrations + db/schema. Run from
-                               inside the app.
-  chain database update       Apply every pending migration straight to
-                               the app's real SQLite file (the same one
-                               desktop.storage.migrate() would use) —
-                               without launching the app. Run from
-                               inside the app.
-  chain database list         List every migration with its applied/
-                               pending status against that same file.
+  chain migration add <name>  Generate the next migration by diffing the
+                               app's @Table schema classes against the
+                               last migration's saved model (Up and Down
+                               SQL), like \`dotnet ef migrations add\`.
+                               --empty for one you write by hand.
+  chain migration remove      Delete the latest migration, if it isn't
+                               applied to your local database.
+  chain migration list        Every migration and whether it's applied.
+  chain migration script [from] [to]
+                               Print the SQL between two versions.
+  chain migration check       Exit 1 if the classes have changes no
+                               migration covers (for CI).
+  chain database update [target]
+                               Apply pending migrations to the app's real
+                               SQLite file, or revert down to a version or
+                               name — without launching the app.
+  chain database list         Same as \`chain migration list\`.
+  chain database scaffold     Generate @Table classes from an app's
+                               existing hand-written migrations, so
+                               \`migration add\` can take over.
+  chain clean                 Free disk space: remove this app's release
+                               builds and its own crate from the shared
+                               dev build cache (run from inside the app).
+  chain clean --all           Remove the whole shared dev build cache
+                               used by every Chain app on this machine.
   chain doctor                Check (and optionally install) the Rust
                                toolchain a Chain app needs to build.
   chain --help, -h            Show this help.
@@ -84,6 +96,10 @@ switch (command) {
     await inspect(args);
     break;
 
+  case "clean":
+    clean(args);
+    break;
+
   case "doctor":
     await doctor();
     break;
@@ -92,12 +108,14 @@ switch (command) {
     await update();
     break;
 
+  // Loaded on demand: they use node:sqlite, whose ExperimentalWarning
+  // would otherwise print on every chain command.
   case "migration":
-    migration(args);
+    await (await import("./migration.js")).migration(args);
     break;
 
   case "database":
-    await database(args);
+    await (await import("./database.js")).database(args);
     break;
 
   case "--help":

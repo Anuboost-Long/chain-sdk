@@ -1,0 +1,195 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Storage",
+  description: "desktop.storage: the app's own SQLite database, with migrations, typed table queries, raw SQL, and transactions."
+};
+
+# Storage
+
+<div className="lead">
+  Give your app its own SQLite database, stored in the user's app-data folder. You write the schema and the SQL; Chain
+  handles opening the database, tracking migrations, and binding parameters safely.
+</div>
+
+<PlatformSupport name="storage" />
+
+## Example
+
+Declare the table as a class:
+
+```ts title="src/lib/db/schema/note.ts"
+import { Column, PrimaryKey, Table } from "@chain/sdk/schema";
+
+@Table()
+export class Note {
+  @PrimaryKey({ autoIncrement: true }) id!: number;
+  title!: string;
+  @Column({ defaultSql: "datetime('now')" }) created_at!: string;
+}
+```
+
+Generate the migration from it:
+
+```bash
+chain migration add create-notes
+```
+
+Then run pending migrations on startup and work with the table through the class:
+
+```ts title="src/lib/notes.ts"
+import { desktop, sql } from "@chain/sdk";
+
+import { migrations } from "./db/migrations";
+import type { Note } from "./db/schema";
+
+const notes = desktop.storage.table<Note>("note");
+
+export function initNotes() {
+  return desktop.storage.migrate(migrations); // safe on every launch
+}
+
+export function addNote(title: string) {
+  return notes.insert({ title }); // resolves with the stored row, id and created_at included
+}
+
+export function listNotes(since?: string) {
+  const recent = since ? notes.where(sql`date(created_at) >= date(${since})`) : notes;
+  return recent.orderBy("created_at desc").all();
+}
+```
+
+When the class changes, run `chain migration add <name>` again. See [chain migration](/cli/migration/) for how
+schema classes work and how changes become SQL.
+
+## API
+
+<ContractSource name="storage" />
+
+### `migrate(migrations)`
+
+Runs every migration whose `version` hasn't been applied yet, in ascending order. Each migration's `sql` can hold
+several statements and runs as one batch.
+
+- **Migrations are generated for you** by `chain migration add` from your schema classes. You can still pass
+  hand-written ones: any `{ version, sql }` works.
+- **Versions must be unique and only ever increase.** Never edit or renumber a migration that has shipped; add a new one.
+- **It's safe to call on every launch.** Already-applied versions are skipped, so passing the same list again does
+  nothing.
+- **Chain tracks applied versions in a table named `_chain_migrations`.** Don't create a table with that name.
+
+[chain database](/cli/database/) applies or reverts them without launching the app. `name` and `down` are optional
+fields generated migrations carry: `name` goes into the history, and `down` is only used by the CLI to roll back.
+
+### `table<T>(name)`
+
+A typed view of one table. `T` is its schema class, `name` its table name: `table<Note>("note")`. Column names and
+value types are checked against the class when you compile, so renaming a property breaks the build instead of a query
+at runtime.
+
+Import the class with `import type`. Schema classes are read by the CLI, not run, and bundlers don't compile their
+decorators for the webview, which is also why the table name is passed separately.
+
+Reads build up a query. Each call returns a new one, so a query can be kept and extended:
+
+- **`where(filter)`** takes an object of column equalities, joined with `AND`. A value means `=`, `null` means
+  `IS NULL`, an array means `IN (…)`, and `undefined` adds no condition, so optional filters pass straight through:
+  `where({ status, bookmarked })`. Calling `where` again adds more conditions.
+- **`orderBy(...columns)`** sorts ascending, or descending with a ` desc` suffix: `orderBy("position", "created_at desc")`.
+- **`limit(count)`**, then **`all()`** for every row or **`first()`** for the first one, or `undefined`.
+
+Writes act on the table directly:
+
+- **`find(id)`** resolves with the row whose `id` matches, or `undefined`.
+- **`insert(values)`** resolves with the inserted row as stored, defaults included. No second query needed.
+- **`update(target, values)`** writes only the columns you pass and resolves with the updated rows.
+- **`delete(target)`** resolves with how many rows it deleted.
+
+A `target` is an `id`, a filter object, or a `sql` fragment. An `update` or `delete` whose target has no condition at
+all, such as `delete({ id: undefined })`, is refused with `INVALID_ARGUMENT` instead of touching every row. To really
+mean every row, pass `` sql`1` ``.
+
+### `sql` fragments
+
+For conditions and values a filter object can't express, write SQL with the `sql` tag. Every `${value}` is bound as a
+parameter and never pasted into the SQL. An array becomes `(?, ?, …)`, and a nested fragment is spliced in:
+
+```ts
+import { sql } from "@chain/sdk";
+
+notes.where(sql`title LIKE ${`%${term}%`}`);
+notes.where(sql`id IN ${ids}`);
+notes.insert({ title, position: sql`(SELECT COALESCE(MAX(position), 0) + 1 FROM note)` });
+notes.update(id, { title, updated_at: sql`datetime('now')` });
+```
+
+`where`, `orderBy`, update and delete targets, and values all accept fragments. Column names inside a fragment aren't
+checked.
+
+### `transaction(work)`
+
+Runs `work` in one transaction. It commits when `work` resolves and rolls back when it throws, then rejects with the
+same error. It resolves with whatever `work` returns.
+
+```ts
+await desktop.storage.transaction(async (tx) => {
+  await tx.table<Page>("page").delete({ module_id: id });
+  await tx.table<Module>("module").delete(id);
+});
+```
+
+**Inside `work`, use `tx`, not `desktop.storage`.** Storage calls run one at a time, and calls outside the transaction
+wait until it finishes, so a `desktop.storage` call inside `work` would wait for itself. After 10 seconds it gives up
+with `UNAVAILABLE` so the mistake shows up as an error instead of a hang.
+
+### `query(sql, params?)`
+
+Runs a read and resolves with one plain object per row, keyed by column name. Pass a row type to get typed results:
+`query<Note>(...)`.
+
+### `execute(sql, params?)`
+
+Runs a write (`INSERT`, `UPDATE`, `DELETE`, or a schema change) and resolves with:
+
+- `rowsAffected`: how many rows changed.
+- `lastInsertId`: the row id of the last inserted row.
+
+### Parameters
+
+Put `?1`, `?2`, … (or plain `?`) in the SQL and pass the values in `params`. Never build SQL by joining strings with
+user input: bound parameters are what keep a title like `'); DROP TABLE notes; --` just a title.
+
+## Behavior
+
+- **One database per app,** in the OS's per-user app-data folder (on macOS,
+  `~/Library/Application Support/<app identifier>/app.db`).
+- **No open step.** The database and its folder are created the first time any `desktop.storage` method runs.
+- **Each `execute` call is one statement.** Use `transaction()` to make several of them atomic.
+- **Calls run one at a time, in the order they're made.** A transaction holds the rest until it finishes.
+- **A reload rolls back.** If the page reloads while a transaction is open, it's rolled back.
+
+## Errors
+
+| Code             | When                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `NATIVE_FAILURE` | Malformed SQL, a constraint violation, or any other database error. `message` has SQLite's text. |
+| `INVALID_ARGUMENT` | A table `update` or `delete` whose target has no condition.                      |
+| `UNAVAILABLE`    | A call waited 10 s on an open transaction, most likely a `desktop.storage` call inside `transaction()`. |
+| `UNSUPPORTED`    | Called outside a Chain app.                                                        |
+
+```ts
+try {
+  await desktop.storage.execute("INSERT INTO notes (id, title) VALUES (?1, ?2)", [1, "Duplicate"]);
+} catch (e) {
+  // e.code === "NATIVE_FAILURE"
+  // e.message: "UNIQUE constraint failed: notes.id"
+}
+```
+
+## Not included
+
+- **No joins, relation loading, or aggregates in `table()`.** Write those queries with `query`.
+- **No column renaming at runtime.** Rows come back keyed by column name, which is why schema class properties are
+  named after their columns. `@Column({ name })` and `@NotMapped()` only affect migrations, not `table()`.
+- **No multiple databases.** One per app.
+- **No nested transactions.**

@@ -56,13 +56,14 @@ app run a process and read its output," not "should it be allowed to."
 One thing this is **not** a policy call about, and stays a hard
 invariant regardless: **no shell interpretation, ever.** See Non-goals.
 
-## `desktop.processRunner.run(command, args, onOutput)`
+## `desktop.processRunner.run(command, args, onOutput, options?)`
 
 ```
 run(
   command: string,
   args: string[],
-  onOutput: (chunk: { stream: "stdout" | "stderr"; data: string }) => void
+  onOutput: (chunk: { stream: "stdout" | "stderr"; data: string }) => void,
+  options?: { stdin?: string }
 ): Promise<{
   id: string;
   kill(): Promise<void>;
@@ -104,6 +105,72 @@ independently, so a stdout chunk and a stderr chunk that were emitted
 by the process only microseconds apart may arrive to `onOutput` in
 either order.
 
+On macOS/Linux, `PATH` resolution uses the user's real login-shell
+`PATH` (resolved once via the user's `$SHELL`, cached for the app's
+lifetime), not the minimal `PATH` a GUI app launched by launchd/Finder
+inherits by default. This is still "the OS's normal executable
+lookup," not a chain-sdk-specific search path — it exists so a bare
+command name (e.g. `"claude"`, installed via nvm/homebrew/asdf) resolves
+the same way whether the app was started from a terminal (`chain dev`)
+or double-clicked from Finder/Dock (a packaged build). If the
+login-shell `PATH` can't be resolved for any reason, this falls back to
+the app's inherited `PATH`, same as before.
+
+### File-reference arguments
+
+```
+type ProcessArg = string | { fileReference: string };
+```
+
+An `args` element may be a `desktop.files` reference instead of a
+string. Native replaces it with **exactly one argv element**: that
+managed file's absolute path, resolved when the argv is built. JS never
+sees the path — the `files` contract's no-real-paths rule holds.
+Driven by mneme's request 14: `codex exec` takes images only as
+`-i <FILE>`, a path on disk.
+
+- Same literal-argv rule as every other element: no shell, no
+  splitting, no substitution **inside** a string (`"see {0}"` is just
+  that string).
+- A reference that doesn't resolve to an existing managed file rejects
+  `run()` with `ChainError { code: "NOT_FOUND" }` **before** anything is
+  spawned.
+- On Windows, a path of 260 characters or more is passed in its
+  `\\?\` extended-length form (the `MAX_PATH` reason `files` hides
+  paths at all). Whether the child program accepts that form is up to
+  the child.
+- No lifecycle: the capability doesn't create or delete the file. The
+  app writes it with `files.write()` and deletes it with
+  `files.delete()` after `exited` resolves.
+- Plain string elements behave exactly as before; existing callers are
+  unchanged.
+
+### `options.stdin` — a one-shot input payload
+
+When `options.stdin` is given, the process is spawned with a piped
+stdin, the whole string is written to it as UTF-8, and stdin is then
+**closed**, so the process sees EOF. That's the whole interaction:
+nothing more can be written afterwards. It exists for input too large
+for argv (macOS `ARG_MAX` is ~1 MB for all args plus the environment,
+Linux caps a single argument at 128 KB, Windows caps the whole command
+line at 32,767 characters). Driven by mneme's request 12 (sending a
+whole module's or course's content to an agent CLI).
+
+- The payload is written **concurrently** with reading stdout/stderr,
+  never before it, so a payload bigger than the OS pipe buffer can't
+  deadlock against a process that starts printing before it has read
+  all of its input. Multi-megabyte payloads are supported.
+- If the process exits or closes its stdin before reading everything
+  (a broken pipe), that is **not** an error: `run()` still resolved
+  when the process started, and `exited` resolves as normal with the
+  real `code`. Same "resolving isn't success" rule as non-zero exits.
+- The string is data, not argv: any character is allowed, including
+  `\0`.
+- When `options.stdin` is omitted (or `options` is), the process gets
+  **no stdin at all** (the null device, so an immediate EOF), exactly
+  as before this option existed. It is deliberately not an empty pipe,
+  since some CLIs behave differently when stdin is a pipe.
+
 ## `handle.kill()`
 
 ```
@@ -120,6 +187,8 @@ resolves with `{ killed: true }`.
 
 - `run()` rejects with `ChainError { code: "INVALID_ARGUMENT" }` if
   `command` is empty.
+- `run()` rejects with `ChainError { code: "NOT_FOUND" }` if an `args`
+  element's `fileReference` doesn't resolve to an existing managed file.
 - `run()` rejects with `ChainError { code: "NOT_FOUND" }` if `command`
   can't be resolved to an executable at all (no such command on `PATH`)
   — mirrors `files`' own `NOT_FOUND` for "the thing you referenced
@@ -156,9 +225,12 @@ resolves with `{ killed: true }`.
 - **No AI-CLI awareness whatsoever.** No stdout parsing, no knowledge of
   `stream-json`, session ids, or any specific agent CLI's flags. See
   "The two open design questions" above.
-- **No stdin, no persistent/interactive process, no PTY.** Each `run()`
-  call is a one-shot process that runs to completion or is killed —
-  there is no way to write further input into it after spawn. If a real
+- **No interactive stdin, no persistent/interactive process, no PTY.**
+  Each `run()` call is a one-shot process that runs to completion or is
+  killed. The only input it can get is `options.stdin`, written once and
+  closed at spawn; there is no way to write further input into it after
+  that (no `handle.write()`). Nor is there a binary (`Uint8Array`) payload,
+  only a string. If a real
   need for an interactive/long-lived process with stdin shows up later,
   that's a different, future capability decision (rule 7 — don't build
   for a hypothetical need), not something bolted onto this one.

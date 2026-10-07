@@ -5,5 +5,9 @@
   "description": "Chain — reusable cross-platform desktop framework (SDK + Rust core). See AGENTS.md.",
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "scripts": {
+    "docs": "npm install --prefix site --no-audit --no-fund && npm run dev --prefix site",
+    "docs:build": "npm install --prefix site --no-audit --no-fund && npm run build --prefix site"
+  }
 }

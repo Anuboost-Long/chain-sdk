@@ -84,11 +84,15 @@ chain inspect               # run from inside an app while `chain dev` is runnin
                              # to eval/click/read the live window (dev-only automation bridge,
                              # never compiled into `chain build` output)
 chain update                # merge chain-sdk template changes into an existing app, run from inside it
-chain migration <name>      # scaffold the next db/migrations/000N-<name>.ts (SQLite apps only),
-                             # run from inside an app — see agent-docs/framework/command/README.md
-chain database update       # apply every pending migration straight to the app's real
-                             # SQLite file, without launching the app — run from inside an app
-chain database list         # list every migration with its applied/pending status
+chain migration add <name>  # generate the next migration (Up + Down SQL) by diffing the
+                             # app's @Table schema classes against the last migration's
+                             # saved model — EF Core's `migrations add`; also remove/list/
+                             # script/check. See agent-docs/framework/command/README.md
+chain database update [target]  # apply pending migrations to the app's real SQLite file,
+                             # or revert down to a target, without launching the app
+chain database scaffold     # adopt hand-written migrations: generate the schema classes
+chain clean                 # free disk: this app's release builds + its crate in the
+                             # shared dev build cache; `--all` clears that whole cache
 chain doctor                # check/install the Rust toolchain a Chain app needs to build
 chain --help, -h            # list commands
 chain --version, -v         # print the CLI version

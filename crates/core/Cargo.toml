@@ -22,6 +22,84 @@ reqwest = "0.12"
 # TcpListener approach (dev_inspector.rs) rather than pulling an async
 # runtime into crates/core. See agent-docs/capabilities/agent-server/research/MACOS.md.
 tiny_http = "0.12"
+# Audio decoding for model-based transcription (src/sherpa/). MPL-2.0,
+# file-level copyleft: using it unmodified carries no obligation beyond
+# its notice. No Opus decoder exists in it — see speech/research/WINDOWS.md.
+symphonia = { version = "0.5", default-features = false, features = ["aac", "isomp4", "mp3", "wav", "pcm", "flac", "ogg", "vorbis", "mkv", "caf", "aiff"] }
+# files::pick — the OS open panel attached to the app window (a sheet on
+# macOS via beginSheetModalForWindow, not wry's app-modal runModal). The
+# parent comes in through raw-window-handle's traits, so this crate never
+# depends on Tauri. See agent-docs/capabilities/files/research/MACOS.md.
+rfd = "0.17"
+raw-window-handle = "0.6"
+# models: SHA-256 of downloads and archive extraction (all MIT/Apache-2.0).
+sha2 = "0.10"
+tar = "0.4"
+bzip2 = "0.5"
+flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# embeddings: Hugging Face tokenizer.json (Apache-2.0). fancy-regex, not
+# the default onig, keeps it pure Rust; no progress bars or hub downloads.
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+# dev_trace: app/webview process memory and CPU for `chain inspect --trace`.
+# Only with the dev-trace feature, which only `chain dev` enables.
+sysinfo = { version = "0.37", optional = true, default-features = false, features = ["system"] }
+
+[features]
+# Text-to-speech. Links sherpa-onnx's TTS-enabled build, which includes
+# espeak-ng (GPL-3.0) — so it's off unless an app opts in with package.json
+# "chain": { "gpl": true } (chain dev/build then pass chain-core/tts).
+# See agent-docs/capabilities/models/research/LICENSING.md.
+tts = []
+# `chain inspect --trace` (src/dev_trace.rs). Passed only by `chain dev`,
+# never `chain build`.
+dev-trace = ["dep:sysinfo"]
+
+[build-dependencies]
+cc = "1"
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+bzip2 = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+
+# vision (Vision's text recognizer) and speech's pre-macOS-26 fallback
+# (SFSpeechRecognizer) reach Apple frameworks through objc2's generated
+# bindings; SpeechAnalyzer goes through swift/ (build.rs). See
+# agent-docs/capabilities/vision/research/MACOS.md and speech/research/MACOS.md.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-vision = "0.3"
+objc2-image-io = "0.3"
+objc2-speech = "0.3"
+objc2-avf-audio = "0.3"
+block2 = "0.6"
+# files::open/reveal: NSWorkspace; browser: the window's title bar height;
+# window: the title bar, its buttons and their placement.
+# Same version Tauri already builds, so nothing new ships.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSResponder", "NSView", "NSWindow", "NSControl", "NSButton"] }
+# browser: clearing a session's WKWebsiteDataStore, the page's
+# back/forward state, and closing popups that call window.close(). Same version wry already builds.
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "WKNavigation", "WKUIDelegate"] }
+# dev_launch: posix_spawn + dlsym for relaunching a `chain dev` binary
+# responsible for its own permission prompts.
+libc = "0.2"
+
+# vision on Windows: WinRT's Windows.Media.Ocr, called directly — no .NET.
+# Same major version Tauri/wry already pull in, so no second copy.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Storage_Streams",
+    "Win32_System_WinRT",
+] }

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Toolbar</title>
+<style>
+  :root {
+    --surface: #f4f4f5;
+    --divider: rgb(0 0 0 / 0.1);
+    --field: rgb(0 0 0 / 0.05);
+    --hover: rgb(0 0 0 / 0.06);
+    --pressed: rgb(0 0 0 / 0.1);
+    --text: #18181b;
+    --muted: #71717a;
+    --focus: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #27272a;
+      --divider: rgb(255 255 255 / 0.1);
+      --field: rgb(255 255 255 / 0.07);
+      --hover: rgb(255 255 255 / 0.08);
+      --pressed: rgb(255 255 255 / 0.13);
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --focus: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--divider);
+    color: var(--text);
+    font: 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    flex: none;
+  }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:active:not(:disabled) { background: var(--pressed); }
+  button:disabled { opacity: 0.35; }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .icon { width: 28px; }
+  .icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  #address {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    margin: 0 4px;
+    padding: 0 10px;
+    border-radius: 6px;
+    background: var(--field);
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  #address svg { width: 12px; height: 12px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+  #address svg[hidden] { display: none; }
+  #location { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+  #host { color: var(--text); }
+  #buttons { display: flex; gap: 4px; }
+  #buttons:empty { display: none; }
+  #buttons button { padding: 0 12px; font-weight: 500; box-shadow: inset 0 0 0 1px var(--divider); }
+</style>
+</head>
+<body>
+  <button class="icon" data-action="back" aria-label="Back" title="Back">
+    <svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>
+  </button>
+  <button class="icon" data-action="forward" aria-label="Forward" title="Forward">
+    <svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg>
+  </button>
+  <button class="icon" data-action="reload" aria-label="Reload" title="Reload">
+    <svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.46-3.54M13 2.5v3h-3"/></svg>
+  </button>
+  <div id="address">
+    <svg id="secure" viewBox="0 0 12 12" aria-label="Secure connection" hidden><rect x="2.5" y="5.5" width="7" height="5" rx="1"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5"/></svg>
+    <span id="location"><span id="host"></span><span id="rest"></span></span>
+  </div>
+  <div id="buttons"></div>
+<script>
+  const back = document.querySelector('[data-action="back"]');
+  const forward = document.querySelector('[data-action="forward"]');
+
+  function showAddress(address) {
+    let url;
+    try { url = new URL(address); } catch { url = null; }
+    document.getElementById("secure").hidden = url?.protocol !== "https:";
+    document.getElementById("host").textContent = url ? url.host : address;
+    document.getElementById("rest").textContent = url ? url.pathname + url.search + url.hash : "";
+    document.getElementById("location").title = address;
+  }
+
+  function showButtons(buttons) {
+    document.getElementById("buttons").replaceChildren(...buttons.map(({ id, label, enabled }) => {
+      const button = document.createElement("button");
+      button.dataset.action = "button";
+      button.dataset.id = id;
+      button.textContent = label;
+      button.disabled = enabled === false;
+      return button;
+    }));
+  }
+
+  window.chainToolbar = {
+    update(state) {
+      if ("url" in state) showAddress(state.url);
+      if ("canGoBack" in state) back.disabled = !state.canGoBack;
+      if ("canGoForward" in state) forward.disabled = !state.canGoForward;
+      if ("buttons" in state) showButtons(state.buttons);
+    }
+  };
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || button.disabled) return;
+    const query = new URLSearchParams({ do: button.dataset.action });
+    if (button.dataset.id !== undefined) query.set("id", button.dataset.id);
+    fetch(`/action?${query}`);
+  });
+
+  fetch("/state").then((response) => response.json()).then(window.chainToolbar.update);
+</script>
+</body>
+</html>

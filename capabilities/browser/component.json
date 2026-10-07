@@ -1,0 +1,16 @@
+{
+  "name": "browser",
+  "description": "A separate signed-in browser window the app controls: its own persistent session, a toolbar with app-defined buttons, reading the page the user is on, and fetching with that session.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/browser/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

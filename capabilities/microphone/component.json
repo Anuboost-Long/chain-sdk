@@ -1,0 +1,16 @@
+{
+  "name": "microphone",
+  "description": "Microphone capture through the webview's own getUserMedia + MediaRecorder, enabled by an app-declared permission.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/microphone/CONTRACT.md",
+    "structural": null
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

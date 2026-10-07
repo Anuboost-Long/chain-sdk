@@ -1,0 +1,117 @@
+export const metadata = {
+  title: "chain inspect",
+  description: "Drive a running Chain dev window from the terminal: evaluate code, click, read text, take screenshots, trace performance."
+};
+
+# chain inspect
+
+<div className="lead">
+  Control your running app from a second terminal: run JavaScript in its window, click elements, read text, wait for the
+  UI, and take screenshots. Useful for scripted checks and for AI agents working on your app.
+</div>
+
+```bash
+chain inspect                      # interactive prompt
+chain inspect --eval "<js>"        # run one command and exit
+```
+
+Run it inside your app while [chain dev](/cli/dev/) is running.
+
+## Example
+
+```text
+# terminal 1
+$ chain dev
+
+# terminal 2, same folder
+$ chain inspect
+⛓  chain inspect — waiting for dev inspector...
+connected. `help` for commands, `quit` to exit.
+
+inspect> eval document.title
+"Notes"
+inspect> click-text About
+OK: A
+inspect> wait h1
+found: h1
+inspect> text h1
+"About this app"
+inspect> screenshot ./about.png
+saved: ./about.png (184212 bytes)
+inspect> quit
+```
+
+One command at a time, for scripts and CI:
+
+```bash
+chain inspect --eval "document.querySelectorAll('li').length"
+chain inspect --screenshot ./editor.png --selector ".editor"
+```
+
+## Commands
+
+| Command                                           | What it does                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `eval <js>`                                       | Run JavaScript in the window and print the result.                   |
+| `click <selector>`                                | Click the first element matching a CSS selector.                     |
+| `click-text <text>`                               | Click the button or link whose text matches.                         |
+| `text [selector]`                                 | Print the text of an element, or of the whole page.                  |
+| `wait <selector>`                                 | Wait until an element matching the selector exists.                  |
+| `type <selector> <text>`                          | Type text into an input.                                             |
+| `rect`                                            | Print the window's position and size.                                |
+| `focus`                                           | Bring the window to the front, so it renders frames.                 |
+| `trace start\|dump\|stop [--json]`                 | Record native calls, frames, and memory. See below.                  |
+| `screenshot <path> [--selector <sel>]`            | Save a PNG of the window, or of one element. macOS only.             |
+| `drag <x1> <y1> <x2> <y2> [--selector <sel>]`     | Perform a real mouse drag, for example to select text. macOS only.   |
+| `quit`                                            | Disconnect.                                                          |
+
+The one-shot flags are `--eval`, `--rect`, `--focus`, `--trace`, `--screenshot`, and `--drag`.
+
+## Tracing performance
+
+Record what your app does while you use it, then read where the time went:
+
+```bash
+chain inspect --focus           # a hidden window doesn't render frames
+chain inspect --trace start
+# use the app: open screens, type, save
+chain inspect --trace stop      # print the report and end the trace
+```
+
+```text
+trace: 6.3 s, 44 native calls
+
+count  total ms  median  p95     native  sqlite  rows    call
+    6       8.0     1.0     3.0     1.9     0.7      20  storage_query: SELECT page.id, page.title, page.type, page.icon, …
+    8       6.0     1.0     1.0     1.0     0.2      16  storage_query: SELECT day, opened, completed FROM study_day WHERE day >= ?
+    4       6.0     1.0     3.0     0.8     0.1       8  storage_query: SELECT day FROM study_day WHERE opened > 0 ORDER BY day DESC LIMIT 400
+
+frames: 377; gaps over 25 ms: 0, over 33 ms: 0, over 50 ms: 0
+
+app process: 97.4 MB avg, 97.6 MB peak; CPU 5.5% avg, 12.9% peak
+webview: 152.6 MB avg, 160.2 MB peak; CPU 7.2% avg, 30.2% peak
+```
+
+- **Calls are grouped by command, and by SQL text for storage.** `total ms`, `median` and `p95` are measured in the
+  page, from call to result. `native` is the time inside the app's handler, and `sqlite` the time spent in the database.
+- **Page-side times are whole milliseconds on macOS,** because WKWebView rounds its clock. `native` and `sqlite` are
+  measured in the app and are precise.
+- **Native time is only dispatch for async commands** such as http, tts, models, speech and vision, which return while
+  their work continues. Read their page-side time instead.
+- **Frame gaps** are counted while the page is visible. A gap over 25 ms is a dropped frame at 60 Hz. Gaps over 50 ms
+  are listed with the calls that were in flight.
+- **`--trace dump`** prints the report so far and keeps recording. Add `--json` to either for the full data, every
+  call included.
+- **Only calls made through `@chain/sdk` are traced,** which is every native call an app makes.
+
+## Behavior
+
+- **Development builds only.** The bridge `inspect` talks to, and the tracing behind `--trace`, are compiled in by
+  `chain dev` and never included in a release build.
+- **Local only.** It listens on `127.0.0.1` with a random port and a per-run token, and speaks plain TCP, which a web
+  page can't open. A website you visit can't drive your dev app.
+- **Screenshots and drags need one-time macOS permissions** (Screen Recording and Accessibility) for your terminal.
+  They're granted to `chain inspect` itself, so they don't need approving again every time your app rebuilds.
+- **Drags use `cliclick`.** If it isn't installed, `inspect` offers to install it with Homebrew and asks first.
+- **Why not Playwright?** Chain renders in the OS's own webview, not a bundled Chromium, so there's no DevTools
+  protocol for Playwright to attach to. `inspect` fills that role.

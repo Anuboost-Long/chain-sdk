@@ -88,7 +88,7 @@ export async function init(projectName: string): Promise<void> {
   fs.renameSync(path.join(target, "src-tauri"), path.join(target, ".chain/native"));
 
   console.log("\nWiring @chain/sdk, Tailwind CSS, react-router-dom, and chain-core...");
-  const ctx = scaffoldContext(target);
+  const ctx = scaffoldContext(target, true);
   writeTrackedFiles(ctx);
 
   console.log("\nInstalling dependencies (npm install)...");
@@ -99,7 +99,11 @@ export async function init(projectName: string): Promise<void> {
     console.log("\n  add   .git (git init)");
   }
 
-  console.log(`\nDone. @chain/sdk@^${ctx.sdkVersion} and chain-core (pinned git rev) are wired up.`);
+  console.log(
+    ctx.checkout
+      ? `\nDone. @chain/sdk, @chain/cli and chain-core are linked to the chain-sdk checkout at ${ctx.checkout}.`
+      : `\nDone. @chain/sdk@^${ctx.sdkVersion} and chain-core (pinned git rev) are wired up.`
+  );
   console.log(`Next: cd ${target} && npm run dev`);
   console.log(
     "Later, when chain-sdk's templates change, run `chain update` from inside this app to " +
