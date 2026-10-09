@@ -100,6 +100,26 @@ onOutput)` stays identical either way):
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and this
       capability's `component.json` once confirmed.
 
+## Tree kill on Windows (request 03) — implemented blind, not verified
+
+There are no POSIX process groups. `process_tree::terminate` runs
+`%SystemRoot%\System32\taskkill.exe /PID <pid> /T /F` (by absolute path,
+like `chain dev` does), which walks the parent/child tree. It has no
+graceful phase, and exit code 128 ("not found") counts as already gone.
+It has never been compiled or run on Windows.
+
+The better long-term answer is a **Job Object** created at spawn with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: `TerminateJobObject` kills every
+process in it, even ones whose parent already exited (which breaks
+`taskkill /T`'s parent chain), and closing the job handle kills the tree
+if the app crashes. Needs `CREATE_SUSPENDED` + `AssignProcessToJobObject`
++ resume, or `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so it doesn't fit
+`std::process::Command` without raw `windows` calls.
+
+Checklist: `npm run dev` (a `.cmd` shim, so see the shim question above
+first) → `kill()` → the port is free immediately; a process that's
+already exited → `kill()` resolves.
+
 ## File-reference arguments on Windows (request 14) — not yet verified
 
 The reason `files` hides paths is Windows' `MAX_PATH` (260). A resolved

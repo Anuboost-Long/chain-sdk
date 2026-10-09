@@ -1,0 +1,160 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Folders",
+  description: "desktop.folders: work with real files in folders the user chose."
+};
+
+# Folders
+
+<div className="lead">
+  Open a folder the user chooses, such as a project or a notes vault, and list, read, write, move and watch the files
+  in it by their real paths. The user's choice is remembered across restarts.
+</div>
+
+<PlatformSupport name="folders" />
+
+## Example
+
+An "Open project" button that indexes the chosen folder:
+
+```tsx title="src/components/OpenProject.tsx"
+import { desktop, type FolderEntry, type FolderGrant } from "@chain/sdk";
+import { useState } from "react";
+
+export function OpenProject() {
+  const [project, setProject] = useState<FolderGrant>();
+  const [files, setFiles] = useState<FolderEntry[]>([]);
+
+  async function open() {
+    const [chosen] = await desktop.folders.pick();
+    if (!chosen) return; // cancelled
+    setProject(chosen);
+    const entries = await desktop.folders.list(chosen.path, {
+      recursive: true,
+      skipFolders: ["node_modules", ".git"]
+    });
+    setFiles(entries.filter((entry) => entry.kind === "file"));
+  }
+
+  return (
+    <section>
+      <button onClick={open}>Open project</button>
+      {project && <h2>{project.path}</h2>}
+      <ul>
+        {files.map((file) => (
+          <li key={file.path}>{file.path.slice(project!.path.length + 1)}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+### Reopening on the next launch
+
+Grants are remembered, so the app can reopen its folders without asking again:
+
+```ts
+const projects = (await desktop.folders.grants()).filter((grant) => grant.source !== "declared");
+```
+
+### Editing a file
+
+Writes are atomic: the file holds either the old content or the new, even if the app crashes mid-write.
+
+```ts
+const envPath = `${project.path}/.env`;
+const text = await desktop.folders.readText(envPath);
+await desktop.folders.writeText(envPath, text.replace("PORT=3000", "PORT=3001"));
+```
+
+### Reading another tool's data
+
+Folders your app always needs to read, such as another tool's data, are declared in your app's `package.json`. They're
+read-only, and the user doesn't have to pick them. An entry can also be a single file, which grants that file alone:
+
+```json title="package.json"
+"chain": { "readOnlyFolders": ["~/.claude/projects"] }
+```
+
+Read a growing log incrementally with `readBytes` and an offset:
+
+```ts
+const { size } = await desktop.folders.stat(log);
+const fresh = await desktop.folders.readBytes(log, { offset: lastReadSize });
+```
+
+### Your app's own folders
+
+Two folders belong to your app, with real paths you can pass to other programs. `data` survives restarts; the system
+may clear `temp`.
+
+```ts
+const data = await desktop.folders.appFolder("data");
+const gitDir = `${data.path}/shadow-repos/${projectId}`;
+await desktop.folders.createFolder(gitDir);
+await desktop.processRunner.run("git", [`--git-dir=${gitDir}`, `--work-tree=${project.path}`, "init"], onOutput);
+```
+
+### Watching for changes
+
+```ts
+const watch = await desktop.folders.watch(project.path, (changes) => refresh(changes), { recursive: true });
+// later
+await watch.stop();
+```
+
+## API
+
+<ContractSource name="folders" />
+
+### Granting
+
+- `pick({ multiple?, files? })` shows the folder picker and grants what the user chooses. It resolves `[]` on cancel.
+  `files: true` allows files as well as folders (macOS only for now).
+- `onDrop(handler)` grants whatever the user drops onto the window while a handler is subscribed.
+- `grants()` lists every grant; `revoke(id)` forgets one the user picked or dropped.
+- `appFolder("data" | "temp")` returns one of your app's own folders. These are always writable and aren't listed by
+  `grants()`.
+
+### Paths
+
+Every path is absolute. Chain checks each one natively against the grants. Paths come back in their real form:
+symlinks resolved, and the letter case as stored on disk.
+
+### Reading and writing
+
+`list`, `stat`, `exists`, `readText`, `readBytes`, `writeText`, `writeBytes`, `createFolder`, `move`, and
+`delete` (optionally `{ toTrash: true }`).
+
+## Behavior
+
+- **Symlinks are followed only into granted folders.** A link pointing outside is rejected for reading and writing,
+  but can still be inspected and deleted.
+- **`readText` is strict UTF-8.** A file that isn't valid UTF-8 rejects instead of being decoded lossily. Read it with
+  `readBytes`.
+- **`move` won't overwrite.** It rejects if the target exists, except a case-only rename like `readme.md` →
+  `README.md`.
+- **A granted folder itself can't be moved or deleted.** Revoke it instead.
+- **Watch events can arrive batched or late.** A `rescan` change means the OS lost track and anything under the
+  folder may have changed.
+
+## Errors
+
+| Code                | When                                                                          |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `NOT_GRANTED`       | The path is outside every grant, or it's a write to a read-only folder.       |
+| `PERMISSION_DENIED` | The OS refused, for example macOS privacy protection on Documents.            |
+| `NOT_FOUND`         | The path, or a write's parent folder, doesn't exist.                          |
+| `INVALID_ARGUMENT`  | A relative path or `..`, the wrong kind (a folder read as a file), and so on. |
+| `UNAVAILABLE`       | Another program has the file locked.                                          |
+| `TOO_LARGE`         | A read would exceed `maxBytes`.                                               |
+| `UNSUPPORTED`       | Called outside a Chain app, or `toTrash` where it isn't supported yet.        |
+
+## Not included
+
+- **No access outside grants**, and no way for the app to grant itself a folder.
+- **No `.gitignore` handling.** `skipFolders` is a plain list of names. What to skip is up to your app.
+- **No copy.** Read and write each file.
+- **Watches don't survive a reload or restart.** Start them again.

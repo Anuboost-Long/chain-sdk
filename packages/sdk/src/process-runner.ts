@@ -9,11 +9,13 @@ import type {
   ProcessRunOptions,
   ProcessRunnerApi
 } from "./contracts/process-runner";
-import { chainError } from "./errors";
+import { chainError, type ChainErrorCode } from "./errors";
 
 const INVALID_ARGUMENT_PREFIX = "INVALID_ARGUMENT: ";
 const NOT_FOUND_PREFIX = "NOT_FOUND: ";
 const PERMISSION_DENIED_PREFIX = "PERMISSION_DENIED: ";
+// A `cwd` is checked against desktop.folders' grants, and kill() can time out.
+const OTHER_CODES: ChainErrorCode[] = ["NOT_GRANTED", "UNAVAILABLE", "TIMEOUT"];
 
 function requireTauri(method: string): void {
   if (!isTauri()) {
@@ -35,6 +37,8 @@ function toChainError(error: unknown, fallback: string) {
     if (error.startsWith(PERMISSION_DENIED_PREFIX)) {
       return chainError("PERMISSION_DENIED", error.slice(PERMISSION_DENIED_PREFIX.length));
     }
+    const code = OTHER_CODES.find((candidate) => error.startsWith(`${candidate}: `));
+    if (code) return chainError(code, error.slice(code.length + 2));
   }
   return chainError("NATIVE_FAILURE", typeof error === "string" ? error : fallback);
 }
@@ -114,7 +118,15 @@ export const processRunner: ProcessRunnerApi = {
     pending.set(id, { onOutput, resolveExit: exitResolve });
 
     try {
-      await invoke<void>("process_runner_run", { id, command, args, stdin: options?.stdin });
+      await invoke<void>("process_runner_run", {
+        id,
+        command,
+        args,
+        stdin: options?.stdin,
+        keepStdinOpen: options?.keepStdinOpen,
+        cwd: options?.cwd,
+        env: options?.env
+      });
     } catch (error) {
       pending.delete(id);
       throw toChainError(error, "processRunner.run() failed");
@@ -129,6 +141,18 @@ export const processRunner: ProcessRunnerApi = {
         } catch (error) {
           throw toChainError(error, "processRunner kill() failed");
         }
+      },
+      async write(text: string): Promise<void> {
+        requireTauri("write");
+        try {
+          await invoke<void>("process_runner_write", { id, text });
+        } catch (error) {
+          throw toChainError(error, "processRunner write() failed");
+        }
+      },
+      async closeStdin(): Promise<void> {
+        requireTauri("closeStdin");
+        await invoke<void>("process_runner_close_stdin", { id });
       },
       exited
     };

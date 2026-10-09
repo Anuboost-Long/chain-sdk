@@ -38,6 +38,7 @@ fn main() {
     println!("cargo:rerun-if-changed=swift/ChainWindow.swift");
     println!("cargo:rerun-if-changed=swift/ChainPdf.swift");
     println!("cargo:rerun-if-changed=swift/ChainShare.swift");
+    println!("cargo:rerun-if-changed=swift/ChainAttention.swift");
     println!("cargo:rerun-if-env-changed=CHAIN_SHERPA_ONNX_ARCHIVE_DIR");
     println!("cargo::rustc-check-cfg=cfg(chain_no_sherpa)");
     link_sherpa_onnx();
@@ -205,7 +206,7 @@ fn build_swift_bridge() {
     let status = Command::new("swiftc")
         .args(["-emit-library", "-static", "-parse-as-library", "-O", "-swift-version", "5"])
         .args(["-module-name", "ChainSwift", "-target", &target, "-sdk", sdk.trim()])
-        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift", "swift/ChainRecorder.swift", "swift/ChainWindow.swift", "swift/ChainPdf.swift", "swift/ChainShare.swift"])
+        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift", "swift/ChainRecorder.swift", "swift/ChainWindow.swift", "swift/ChainPdf.swift", "swift/ChainShare.swift", "swift/ChainAttention.swift"])
         .arg("-o")
         .arg(out_dir.join("libChainSwift.a"))
         .status()

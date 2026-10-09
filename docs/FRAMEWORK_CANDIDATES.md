@@ -163,6 +163,8 @@ Used by:
   `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo,
   plus `12-process-runner-stdin.md` for the one-shot `options.stdin`
   payload)
+- Lazify (request 03 in `lazify-chain/docs/chain-sdk-requests/` — `cwd`,
+  `env`, writing to stdin mid-run, and killing the whole process tree)
 
 Generalizable:
 Yes — spawning a named executable with an argv array and streaming its
@@ -474,6 +476,140 @@ verified in the playground except picking a service (needs a person)
 
 Windows:
 Not started — `DataTransferManager` share UI, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Folders
+
+Used by:
+lazify (requests 01 and 02 — open and index project folders, edit
+`.env`, project-local data, change events), mneme (request 11 — read
+other tools' session files incrementally, through declared folders)
+
+Generalizable:
+Yes — any app whose subject is the user's own files: editors,
+developer tools, anything that opens a folder
+
+Contract:
+Draft (`agent-docs/capabilities/folders/CONTRACT.md`, `capabilities/folders/contract.ts`)
+
+macOS:
+Implemented in Rust (`std::fs`, `notify`/FSEvents, `rfd` picker,
+`NSFileManager` Trash); verified end to end in a scaffolded app except
+drag-and-drop and a real privacy-protection denial
+
+Windows:
+Not started — long paths, locked files and Trash in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Terminal
+
+Used by:
+lazify (request 04 — dev servers and AI agent CLIs in real terminals
+that survive a page reload)
+
+Generalizable:
+Yes — any app that embeds a terminal: IDEs, devtools, agent monitors
+
+Contract:
+Draft (`agent-docs/capabilities/terminal/CONTRACT.md`, `capabilities/terminal/contract.ts`)
+
+macOS:
+Implemented with `portable-pty` (openpty); verified end to end,
+including reattaching after a real reload
+
+Windows:
+Not started — ConPTY through the same crate, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Ports
+
+Used by:
+lazify (request 05 — step a dev script up to a free port; wait for a
+stopped server's port before restarting)
+
+Generalizable:
+Yes — any app that starts local servers (devtools, IDEs, local AI
+runtimes)
+
+Contract:
+Draft (`agent-docs/capabilities/ports/CONTRACT.md`, `capabilities/ports/contract.ts`)
+
+macOS:
+Implemented in Rust (`std::net` binds on four addresses); verified end to
+end against real Node servers
+
+Windows:
+Not started — different bind-conflict rules, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Attention
+
+Used by:
+lazify (request 07 — notify and bounce the Dock when an agent waits for
+an answer or finishes while the user is in another app)
+
+Generalizable:
+Yes — any app that does long work in the background
+
+Contract:
+Draft (`agent-docs/capabilities/attention/CONTRACT.md`, `capabilities/attention/contract.ts`)
+
+macOS:
+Partial — focus and the Dock bounce verified; notifications implemented
+in Swift (`UNUserNotificationCenter`), bundle-only, shown/click path
+unverified (macOS refused ad-hoc test bundles, research/MACOS.md)
+
+Windows:
+Not started — WinRT toasts, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## PageZoom
+
+Used by:
+lazify (request 08 — its zoom setting and Cmd +/−/0)
+
+Generalizable:
+Yes — any app with a zoom or text-size setting
+
+Contract:
+Draft (`agent-docs/capabilities/page-zoom/CONTRACT.md`, `capabilities/page-zoom/contract.ts`)
+
+macOS:
+Implemented through Tauri's `Webview::set_zoom` (WKWebView `pageZoom`);
+verified end to end
+
+Windows:
+Not verified — WebView2 `ZoomFactor`, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## KeepAwake
+
+Used by:
+lazify (request 09 — keep the Mac awake while agents work)
+
+Generalizable:
+Yes — any app doing long unattended work (renders, syncs, agents)
+
+Contract:
+Draft (`agent-docs/capabilities/keep-awake/CONTRACT.md`, `capabilities/keep-awake/contract.ts`)
+
+macOS:
+Implemented with IOKit power assertions; verified end to end with `pmset`
+
+Windows:
+Not started — `PowerCreateRequest`, research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)

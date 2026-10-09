@@ -358,6 +358,24 @@ declaration needs no `chain update`. `systemAudio` becomes
 `NSAudioCaptureUsageDescription` and needs no entitlement. See
 `agent-docs/capabilities/microphone/`, `speech/` and `audio-recorder/`.
 
+### Read-only folders — `package.json` "chain.readOnlyFolders"
+
+Folders the app may read without the user picking them (another tool's
+data, such as `~/.claude/projects`), for `desktop.folders`:
+
+```json
+"chain": { "readOnlyFolders": ["~/.claude/projects", "~/.codex/sessions"] }
+```
+
+Each entry is a folder or a single file (e.g. `~/.claude.json`), is
+absolute or starts with `~/`, and may not contain `..`;
+anything else fails the run (`src/readOnlyFolders.ts`). `tauriEnv()` in
+`src/nativeProject.ts` passes the list to `tauri dev`/`tauri build` as
+`CHAIN_READ_ONLY_FOLDERS` (always set, even to `[]`, so Cargo rebuilds
+when it changes), and `.chain/native/src/folders.rs` compiles it in with
+`option_env!`. Changing it needs no `chain update`. See
+`agent-docs/capabilities/folders/`.
+
 ### Permission prompts under `chain dev`
 
 macOS asks for a privacy-gated permission (microphone, speech

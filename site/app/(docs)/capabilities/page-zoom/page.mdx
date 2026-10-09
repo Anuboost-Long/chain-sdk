@@ -1,0 +1,57 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Page zoom",
+  description: "desktop.pageZoom: zoom your app's page like a browser does."
+};
+
+# Page zoom
+
+<div className="lead">
+  Zoom your app's page the way a browser does. The layout reflows at the new size, and canvases, including terminals
+  drawn with xterm.js, stay sharp.
+</div>
+
+<PlatformSupport name="page-zoom" />
+
+## Example
+
+```ts
+import { desktop } from "@chain/sdk";
+
+const steps = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
+async function zoomIn() {
+  const current = await desktop.pageZoom.get();
+  const next = steps.find((step) => step > current);
+  if (next) await desktop.pageZoom.set(next);
+}
+
+await desktop.pageZoom.set(1); // Actual size
+```
+
+## API
+
+<ContractSource name="page-zoom" />
+
+- `set(factor)` zooms the window's page. `1` is 100%, and factors from 0.25 to 5 are accepted.
+- `get()` returns the current factor.
+
+## Behavior
+
+- **It's real page zoom, not CSS `zoom`.** The page sees a smaller or larger viewport, and `devicePixelRatio` scales
+  with the factor, so canvases render at full resolution.
+- **It survives a page reload, not a restart.** Save the factor yourself and set it at startup, before the window
+  shows.
+
+## Errors
+
+| Code               | When                                       |
+| ------------------ | ------------------------------------------ |
+| `INVALID_ARGUMENT` | The factor is outside 0.25–5 or not finite. |
+| `UNSUPPORTED`      | Called outside a Chain app.                |
+
+## Not included
+
+- **No pinch-to-zoom event.**
+- **No View menu.** Call `set()` from your own shortcuts.

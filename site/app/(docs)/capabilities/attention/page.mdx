@@ -1,0 +1,62 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Attention",
+  description: "desktop.attention: notify the user and bounce the Dock while your app is in the background."
+};
+
+# Attention
+
+<div className="lead">
+  Get the user back when something needs them and they're in another app: check whether your window has focus, show a
+  system notification that brings the window back when clicked, and bounce the Dock icon.
+</div>
+
+<PlatformSupport name="attention" />
+
+## Example
+
+```ts
+import { desktop } from "@chain/sdk";
+
+// When a notification is clicked, the window is already in front.
+desktop.attention.onNotificationClick((runId) => openRun(runId));
+
+async function needsAnswer(run: { id: string; name: string }) {
+  if (await desktop.attention.isFocused()) return;
+  await desktop.attention.notify({ id: run.id, title: `${run.name} needs you`, body: "Waiting for a response." });
+  await desktop.attention.requestAttention();
+}
+```
+
+## API
+
+<ContractSource name="attention" />
+
+- `isFocused()` and `onFocusChange(handler)` report whether your window has keyboard focus.
+- `notify({ id, title, body })` shows a system notification with your app's icon. The first call asks the user for
+  permission. A newer notification with the same `id` replaces the older one.
+- `onNotificationClick(handler)` receives the `id` of a clicked notification, after Chain has brought that window
+  forward.
+- `notificationPermission()` returns `granted`, `denied`, `notDetermined` or `unavailable`.
+- `requestAttention()` bounces the Dock icon once, if your app isn't active.
+
+## Behavior
+
+- **Permission never throws.** `notify()` resolves with `{ outcome }`: `shown`, `denied` (the user said no),
+  `unavailable`, or `failed` with the system's `message`.
+- **Notifications work in built apps only.** macOS's notification system needs an app bundle, and `chain dev` runs a
+  plain binary, so there `notify()` resolves `unavailable`. Focus and the Dock bounce work in both.
+
+## Errors
+
+| Code               | When                                   |
+| ------------------ | -------------------------------------- |
+| `INVALID_ARGUMENT` | `notify()` without an `id` or `title`. |
+| `UNSUPPORTED`      | Called outside a Chain app.            |
+
+## Not included
+
+- **No scheduled or push notifications**, actions, replies, or images.
+- **No in-app toasts.** Draw those in your UI.
+- **No keep-awake.**

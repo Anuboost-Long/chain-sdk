@@ -1,0 +1,50 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Keep awake",
+  description: "desktop.keepAwake: stop the computer sleeping while your app works."
+};
+
+# Keep awake
+
+<div className="lead">
+  Keep the computer from going to sleep while your app does long, unattended work, and let it sleep again as soon as
+  the work is done.
+</div>
+
+<PlatformSupport name="keep-awake" />
+
+## Example
+
+```ts
+import { desktop } from "@chain/sdk";
+
+await desktop.keepAwake.start("Exporting your project");
+try {
+  await exportProject();
+} finally {
+  await desktop.keepAwake.stop();
+}
+```
+
+## API
+
+<ContractSource name="keep-awake" />
+
+- `start(reason, { display })` keeps the computer awake. `reason` is shown by the system. With `display: false`, the
+  screen may still turn off.
+- `stop()` lets it sleep again. It's safe to call more than once.
+- `status()` returns what's held now, or `null`.
+
+## Behavior
+
+- **One per app.** Calling `start()` again replaces the reason.
+- **It ends with your app.** If your app quits or crashes, the computer can sleep again.
+- **Only idle sleep.** Closing the lid or choosing Sleep still sleeps.
+
+## Errors
+
+| Code               | When                                                  |
+| ------------------ | ----------------------------------------------------- |
+| `INVALID_ARGUMENT` | `reason` is blank.                                    |
+| `UNSUPPORTED`      | Called outside a Chain app, or not supported here yet. |

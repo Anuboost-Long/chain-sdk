@@ -14,10 +14,21 @@ process, reads stdout and stderr on two dedicated threads (each chunk
 of bytes read is forwarded to `on_output` as soon as it's available,
 tagged `stdout`/`stderr`), and calls `on_exit` exactly once, after both
 pipes hit EOF and the process has actually exited. Returns a
-`ProcessHandle` immediately once spawned, whose `kill()` is a thin
-wrapper over `std::process::Child::kill()` (already portable —
-`SIGKILL` on Unix, `TerminateProcess` on Windows, no per-OS code
-needed).
+`ProcessHandle` immediately once spawned. Each process leads its own
+process group, and `kill()` stops the whole tree through
+`chain_core::process_tree` (SIGTERM to the group, SIGKILL after 2 s,
+`TIMEOUT` if anything outlives 5 s; `taskkill /T /F` on Windows), so a
+wrapper like `npm run dev` doesn't leave its server holding the port.
+`process_runner_kill` runs it off the main thread. Processes still
+running when the app quits normally are killed (`RunEvent::Exit` in
+`templates/lib.rs`).
+
+`RunOptions` also carries `cwd` (checked against `desktop.folders`
+grants in `templates/lib.rs` before `run()` is called), `env` (set after
+the login-shell `PATH`, so it can override it) and `keep_stdin_open`.
+All stdin, the one-shot payload included, goes through a single writer
+thread fed by a channel; `handle.write()` sends to it, and
+`closeStdin()` drops the last sender, which closes stdin.
 
 On macOS/Linux, `run()` substitutes the user's real login-shell `PATH`
 (resolved once, on first use, by spawning `$SHELL -lic 'echo
@@ -96,8 +107,20 @@ await desktop.processRunner.run("claude", ["-p", task], onOutput, { stdin: cours
 const image = await desktop.files.write(pngBytes, { extension: "png" });
 await desktop.processRunner.run("codex", ["exec", "-i", { fileReference: image }, prompt], onOutput);
 
-// To stop it early (e.g. a chat UI's "stop generating" button):
+// To stop it early (e.g. a chat UI's "stop generating" button). This
+// stops everything it started too, and resolves once all of it is gone:
 await handle.kill();
+
+// In a project folder the user granted (desktop.folders), with extra env:
+const install = await desktop.processRunner.run("npm", ["install"], onOutput, {
+  cwd: project.path,
+  env: { PORT: "5174" }
+});
+
+// Answering a prompt while it runs:
+const scaffold = await desktop.processRunner.run("npx", ["create-vite", "app"], (chunk) => {
+  if (chunk.data.includes("(y/N)")) void scaffold.write("y\n");
+}, { cwd: project.path, keepStdinOpen: true });
 ```
 
 A nonexistent command rejects instead of resolving:
@@ -120,9 +143,13 @@ wiring needed per app.
   contract, especially "The two open design questions" (no AI-CLI
   awareness, no compiled-in executable allowlist — that's Phase 28's
   job), `options.stdin` (one-shot payload, EPIPE isn't an error) and
-  the Non-goals (no shell interpretation ever, no interactive stdin/PTY, no
+  `cwd`/`env`, `keepStdinOpen`/`write()`, the tree-killing `kill()`, and
+  the Non-goals (no shell interpretation ever, no PTY, no
   line-buffering, no stream-interleaving guarantee). Check this before
   changing behavior.
+- `crates/core/src/process_tree.rs` — process groups, the SIGTERM →
+  SIGKILL → give-up escalation, and Windows' `taskkill /T`. Shared with
+  `terminal`.
 - `capabilities/process-runner/contract.ts` — the exact types
   (`ProcessRunnerApi`, `ProcessRunOptions`, `ProcessHandle`,
   `ProcessOutputChunk`, `ProcessExit`); change this and every implementation below together,

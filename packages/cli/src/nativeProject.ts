@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { readOnlyFoldersOrExit } from "./readOnlyFolders.js";
+
 /** Where the Tauri native project lives, hidden from day-to-day view (see
  * agent-docs/framework/command/README.md's `.chain/native` section) — a sibling of
  * `.chain/baseline`, not a subfolder of it. */
@@ -54,7 +56,9 @@ export function tauriEnv(cwd: string): NodeJS.ProcessEnv {
     ...process.env,
     CARGO_TERM_COLOR: "always",
     FORCE_COLOR: "1",
-    TAURI_APP_PATH: nativeProjectDir(cwd)
+    TAURI_APP_PATH: nativeProjectDir(cwd),
+    // Always set, even to [], so Cargo rebuilds when the list goes away.
+    CHAIN_READ_ONLY_FOLDERS: JSON.stringify(readOnlyFoldersOrExit(cwd))
   };
 }
 

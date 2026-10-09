@@ -1,0 +1,108 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Terminal",
+  description: "desktop.terminal: interactive programs in a real terminal that keep running across page reloads."
+};
+
+# Terminal
+
+<div className="lead">
+  Run interactive programs, such as dev servers, AI agent CLIs or full-screen tools, in a real terminal. Sessions belong
+  to the app, not the page, so they keep running and keep their output while the page reloads.
+</div>
+
+<PlatformSupport name="terminal" />
+
+## Example
+
+Render a session with [xterm.js](https://xtermjs.org) and connect keyboard and size:
+
+```tsx title="src/components/TerminalView.tsx"
+import { desktop } from "@chain/sdk";
+import { Terminal } from "@xterm/xterm";
+import { useEffect, useRef } from "react";
+
+export function TerminalView({ sessionId }: Readonly<{ sessionId: string }>) {
+  const element = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const xterm = new Terminal();
+    xterm.open(element.current!);
+    const input = xterm.onData((data) => void desktop.terminal.write(sessionId, data));
+    const size = xterm.onResize(({ cols, rows }) => void desktop.terminal.resize(sessionId, cols, rows));
+    // Replays everything kept so far, then continues live.
+    const detach = desktop.terminal.attach(sessionId, (chunk) => xterm.write(chunk.data));
+    return () => {
+      void detach.then((stop) => stop());
+      input.dispose();
+      size.dispose();
+      xterm.dispose();
+    };
+  }, [sessionId]);
+
+  return <div ref={element} />;
+}
+```
+
+Start a session:
+
+```ts
+const session = await desktop.terminal.start({
+  command: "npm",
+  args: ["run", "dev"],
+  cwd: project.path, // a folder granted with desktop.folders
+  cols: 120,
+  rows: 40,
+  label: "Dev server",
+  metadata: { project: project.id }
+});
+```
+
+### After a reload
+
+Sessions are still running. Find them and attach again:
+
+```ts
+for (const session of await desktop.terminal.list()) {
+  if (!session.exit) showTerminal(session.id);
+}
+```
+
+## API
+
+<ContractSource name="terminal" />
+
+- `start(options)` starts a program in a new terminal and resolves with its session.
+- `attach(id, onOutput)` delivers what the session has kept so far, then live output, with nothing missed or repeated.
+- `backlog(id)` returns what's kept so far and the `seq` it ends at.
+- `onOutput(handler)` and `onExit(handler)` observe every session.
+- `write(id, data)` sends keystrokes or pasted text. `resize(id, cols, rows)` changes the size.
+- `kill(id)` stops the program and everything it started. `remove(id)` forgets a session and frees its output.
+
+## Behavior
+
+- **Output is numbered.** Each chunk has a `seq` that goes up by one, so you can tell what you've already seen.
+- **Output is kept while nobody is watching.** The most recent 512 KB by default (`backlogBytes`), trimmed by whole
+  chunks.
+- **Output is UTF-8, never split inside a character.**
+- **Exited sessions stay listed** with their `exit` until you `remove()` them.
+- **Sessions stop when your app quits.**
+
+## Errors
+
+| Code                | When                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| `INVALID_ARGUMENT`  | `command` is empty, a size is zero, or `cwd` isn't a folder. |
+| `NOT_GRANTED`       | `cwd` is outside every granted folder.                       |
+| `NOT_FOUND`         | No such program, `cwd` doesn't exist, or no such session.    |
+| `PERMISSION_DENIED` | The program exists but can't be run.                         |
+| `UNAVAILABLE`       | Writing to or resizing a session that has exited.            |
+| `TIMEOUT`           | `kill` couldn't stop everything within 5 seconds.            |
+
+## Not included
+
+- **No rendering.** Chain hands you the output; draw it with a terminal component such as xterm.js.
+- **No shell strings.** Pass the program and its arguments. To run a command line, start the shell explicitly
+  (`"zsh", ["-l", "-c", line]`).
+- **Sessions don't survive quitting the app.**

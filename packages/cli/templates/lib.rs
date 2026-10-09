@@ -4,9 +4,12 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager};
 
+mod attention;
 mod browser;
 mod dev_inspector;
+mod folders;
 mod pdf;
+mod terminal;
 mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -102,6 +105,7 @@ fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::Pa
     rollback_abandoned_transaction(webview, payload);
     if payload.event() == tauri::webview::PageLoadEvent::Started {
         chain_core::audio_recorder::cancel();
+        folders::release_page(webview);
     }
 }
 
@@ -524,8 +528,8 @@ fn __chain_agent_server_respond(
 // in chain-sdk). chain_core::process_runner owns the actual spawn/pipe-
 // reading and knows nothing about Tauri. Unlike agent-server, this
 // direction needs no blocking wait for a JS reply — output/exit are
-// purely outbound events the webview listens for; the only inbound call
-// is `process_runner_kill`. See
+// purely outbound events the webview listens for; the inbound calls are
+// `process_runner_kill` and stdin writes. See
 // agent-docs/capabilities/process-runner/CONTRACT.md.
 #[derive(Default)]
 struct ProcessRunnerState {
@@ -533,7 +537,7 @@ struct ProcessRunnerState {
     // `process_runner_run` command call that created them) can hold
     // their own clone, same reasoning AgentServerState's `pending` field
     // uses.
-    processes: Arc<Mutex<HashMap<String, chain_core::process_runner::ProcessHandle>>>,
+    processes: Arc<Mutex<HashMap<String, Arc<chain_core::process_runner::ProcessHandle>>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -558,6 +562,8 @@ fn to_process_runner_command_error(e: chain_core::process_runner::ProcessRunnerE
         InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
         NotFound(m) => format!("NOT_FOUND: {m}"),
         PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        TimedOut(m) => format!("TIMEOUT: {m}"),
         Other(m) => m,
     }
 }
@@ -593,7 +599,15 @@ fn process_runner_run(
     command: String,
     args: Vec<ProcessArg>,
     stdin: Option<String>,
+    keep_stdin_open: Option<bool>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
+    // Must be an existing folder inside a grant — see folders/CONTRACT.md.
+    let cwd = match cwd {
+        Some(cwd) => Some(folders::folders(&app)?.working_directory(&cwd).map_err(folders::to_folders_command_error)?),
+        None => None,
+    };
     // Resolved before anything spawns: an unknown reference rejects run()
     // with NOT_FOUND and no process is ever started.
     let args = args
@@ -615,7 +629,12 @@ fn process_runner_run(
     let handle = chain_core::process_runner::run(
         &command,
         &args,
-        stdin,
+        chain_core::process_runner::RunOptions {
+            stdin,
+            keep_stdin_open: keep_stdin_open.unwrap_or(false),
+            cwd,
+            env: env.unwrap_or_default().into_iter().collect(),
+        },
         move |chunk| {
             let stream = match chunk.stream {
                 chain_core::process_runner::ProcessStream::Stdout => "stdout",
@@ -636,19 +655,100 @@ fn process_runner_run(
     )
     .map_err(to_process_runner_command_error)?;
 
-    processes.lock().expect("process-runner mutex poisoned").insert(id.clone(), handle);
+    processes.lock().expect("process-runner mutex poisoned").insert(id.clone(), Arc::new(handle));
+    Ok(())
+}
+
+fn running_process(
+    state: &ProcessRunnerState,
+    id: &str,
+) -> Option<Arc<chain_core::process_runner::ProcessHandle>> {
+    state.processes.lock().expect("process-runner mutex poisoned").get(id).cloned()
+}
+
+// Async and off the main thread: stopping the tree can take up to 5s.
+#[tauri::command]
+async fn process_runner_kill(state: tauri::State<'_, ProcessRunnerState>, id: String) -> Result<(), String> {
+    // Idempotent — a missing id (already exited and cleaned up, or never
+    // existed) is treated as already-stopped, not an error, same
+    // reasoning ProcessHandle::kill() itself already uses.
+    let Some(handle) = running_process(&state, &id) else { return Ok(()) };
+    tauri::async_runtime::spawn_blocking(move || handle.kill())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_process_runner_command_error)
+}
+
+#[tauri::command]
+fn process_runner_write(state: tauri::State<ProcessRunnerState>, id: String, text: String) -> Result<(), String> {
+    let handle = running_process(&state, &id).ok_or_else(|| format!("UNAVAILABLE: process {id} has exited"))?;
+    handle.write(text).map_err(to_process_runner_command_error)
+}
+
+#[tauri::command]
+fn process_runner_close_stdin(state: tauri::State<ProcessRunnerState>, id: String) {
+    if let Some(handle) = running_process(&state, &id) {
+        handle.close_stdin();
+    }
+}
+
+// Bridges the ports capability contract (capabilities/ports in chain-sdk):
+// whether a dev server could bind a TCP port right now. Takes a u32, not a
+// u16, so 70000 reaches the range check instead of failing to deserialize.
+#[tauri::command]
+fn ports_is_free(port: u32) -> Result<bool, String> {
+    let port = u16::try_from(port)
+        .ok()
+        .filter(|p| *p != 0)
+        .ok_or_else(|| format!("INVALID_ARGUMENT: port must be between 1 and 65535, got {port}"))?;
+    chain_core::ports::is_free(port)
+}
+
+// Bridges the page-zoom capability contract (capabilities/page-zoom in
+// chain-sdk): the webview's own page zoom (WKWebView pageZoom), so the page
+// reflows and canvases stay sharp, unlike CSS zoom. WebKit has no getter
+// through Tauri, so the factor each webview was set to is kept here.
+#[derive(Default)]
+struct PageZoomState(Mutex<HashMap<String, f64>>);
+
+#[tauri::command]
+fn page_zoom_set(webview: tauri::Webview, state: tauri::State<PageZoomState>, factor: f64) -> Result<(), String> {
+    let factor = chain_core::page_zoom::check(factor).map_err(|e| format!("INVALID_ARGUMENT: {e}"))?;
+    webview.set_zoom(factor).map_err(|e| e.to_string())?;
+    state.0.lock().expect("page-zoom mutex poisoned").insert(webview.label().to_string(), factor);
     Ok(())
 }
 
 #[tauri::command]
-fn process_runner_kill(state: tauri::State<ProcessRunnerState>, id: String) -> Result<(), String> {
-    // Idempotent — a missing id (already exited and cleaned up, or never
-    // existed) is treated as already-stopped, not an error, same
-    // reasoning ProcessHandle::kill() itself already uses.
-    if let Some(handle) = state.processes.lock().expect("process-runner mutex poisoned").get(&id) {
-        handle.kill().map_err(to_process_runner_command_error)?;
+fn page_zoom_get(webview: tauri::Webview, state: tauri::State<PageZoomState>) -> f64 {
+    state.0.lock().expect("page-zoom mutex poisoned").get(webview.label()).copied().unwrap_or(1.0)
+}
+
+// Bridges the keep-awake capability contract (capabilities/keep-awake in
+// chain-sdk): one power assertion for the whole app, released by the
+// kernel if the app exits or crashes.
+fn to_keep_awake_command_error(e: chain_core::keep_awake::KeepAwakeError) -> String {
+    use chain_core::keep_awake::KeepAwakeError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Other(m) => m,
     }
-    Ok(())
+}
+
+#[tauri::command]
+fn keep_awake_start(reason: String, display: Option<bool>) -> Result<(), String> {
+    chain_core::keep_awake::start(&reason, display.unwrap_or(true)).map_err(to_keep_awake_command_error)
+}
+
+#[tauri::command]
+fn keep_awake_stop() {
+    chain_core::keep_awake::stop();
+}
+
+#[tauri::command]
+fn keep_awake_status() -> Option<chain_core::keep_awake::Held> {
+    chain_core::keep_awake::held()
 }
 
 // Bridges the models capability contract (capabilities/models in
@@ -1274,10 +1374,19 @@ pub fn run() {
         .manage(browser::BrowserState::default())
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
         .manage(window::WindowState::default())
-        .on_window_event(window::on_window_event)
+        .manage(folders::FoldersState::default())
+        .manage(terminal::TerminalState::default())
+        .manage(attention::AttentionState::default())
+        .manage(PageZoomState::default())
+        .on_window_event(|window, event| {
+            window::on_window_event(window, event);
+            folders::on_window_event(window, event);
+            attention::on_window_event(window, event);
+        })
         .manage(pdf::PdfState::default())
         .setup(|_app| {
             window::setup(_app)?;
+            attention::setup(_app);
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
             dev_inspector::start(_app.handle().clone());
@@ -1300,6 +1409,23 @@ pub fn run() {
             files_save,
             files_open,
             files_reveal,
+            folders::folders_pick,
+            folders::folders_grants,
+            folders::folders_revoke,
+            folders::folders_app_folder,
+            folders::folders_accept_drops,
+            folders::folders_list,
+            folders::folders_stat,
+            folders::folders_exists,
+            folders::folders_read_text,
+            folders::folders_read_bytes,
+            folders::folders_write_text,
+            folders::folders_write_bytes,
+            folders::folders_create_folder,
+            folders::folders_move,
+            folders::folders_delete,
+            folders::folders_watch,
+            folders::folders_unwatch,
             share_availability,
             share_show,
             http_request,
@@ -1309,6 +1435,25 @@ pub fn run() {
             __chain_agent_server_respond,
             process_runner_run,
             process_runner_kill,
+            process_runner_write,
+            process_runner_close_stdin,
+            ports_is_free,
+            attention::attention_is_focused,
+            attention::attention_request,
+            attention::attention_permission,
+            attention::attention_notify,
+            page_zoom_set,
+            page_zoom_get,
+            keep_awake_start,
+            keep_awake_stop,
+            keep_awake_status,
+            terminal::terminal_start,
+            terminal::terminal_list,
+            terminal::terminal_backlog,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_kill,
+            terminal::terminal_remove,
             vision_recognize_text,
             vision_recognize_document,
             vision_languages,
@@ -1360,6 +1505,16 @@ pub fn run() {
             pdf::pdf_render,
             __chain_inspector_report
         ]))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Processes and terminal sessions run in their own process
+            // groups, so nothing else stops them when the app quits.
+            if let tauri::RunEvent::Exit = event {
+                for handle in app.state::<ProcessRunnerState>().processes.lock().expect("process-runner mutex poisoned").values() {
+                    handle.kill_now();
+                }
+                terminal::terminals(app).kill_all_now();
+            }
+        });
 }

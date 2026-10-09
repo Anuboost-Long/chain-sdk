@@ -1,0 +1,16 @@
+{
+  "name": "page-zoom",
+  "description": "The calling window's page zoom: real reflow at the new size with sharp canvases (the webview's own page zoom, not CSS zoom). Set and read; 0.25–5.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/page-zoom/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

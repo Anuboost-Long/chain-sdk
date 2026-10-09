@@ -64,14 +64,32 @@ Read order for a task in this capability:
   Process exit is a one-shot terminal value → `Promise` is the more
   idiomatic async/await shape, same reasoning `run()` itself resolving
   once (not repeatedly) already follows.
-- **`Child::kill()` needs no per-OS code** — it's already a portable
-  std method (SIGKILL on Unix, `TerminateProcess` on Windows). The real
-  Windows-specific risk in this capability is entirely on the *spawn*
-  side (npm `.cmd`/`.ps1` shims), not kill — see `research/WINDOWS.md`.
-- **No interactive stdin/PTY/persistent process** — each `run()` is
-  one-shot, matching mneme's actual usage (one process per chat turn,
-  resumed via `--resume <session_id>` as a fresh invocation, not a
-  long-lived pipe).
+- **`kill()` stops the whole tree** (Lazify request 03). Every process
+  leads its own process group (`process_tree::lead_own_group`), and
+  `kill()` is `process_tree::terminate`: SIGTERM to the group, SIGKILL
+  after 2 s, `TIMEOUT` if anything survives 5 s. It no longer touches the
+  `Child`: the waiter thread owns it and reaps it straight away, so the
+  group empties as soon as its members are gone. Windows uses `taskkill
+  /T /F` (unverified). Shared with `terminal`, which needs the same
+  guarantee. A side effect worth knowing: a terminal's Ctrl-C or
+  `chain dev`'s SIGTERM to the app's own group no longer reaches these
+  processes. Normal quit kills them (`RunEvent::Exit` in
+  `templates/lib.rs`), a signal-killed app does not.
+- **No PTY/persistent process** — each `run()` is one process that runs
+  to completion or is killed, matching mneme's usage (one process per
+  chat turn). A real terminal is the separate `terminal` capability.
+- **Interactive stdin is a pipe, here** (request 03's open question,
+  decided): `keepStdinOpen` plus `handle.write()`/`closeStdin()`, for
+  answering a scaffolding CLI's prompt mid-run. All stdin goes through
+  one writer thread fed by a channel; the one-shot `stdin` payload is
+  just the first message, and dropping the last sender closes stdin.
+  Not folded into `terminal`: Lazify's prompt detection reads plain
+  piped output, which a PTY would change.
+- **`cwd` must be inside a `desktop.folders` grant** (request 03),
+  checked in `templates/lib.rs` with `Folders::working_directory` before
+  `run()` is called; `chain_core::process_runner` itself takes an
+  already-checked `PathBuf` and stays independent of folders. `env` is
+  applied after the login-shell `PATH`.
 - **One-shot stdin payload via `options.stdin`**, added for mneme's
   request 12 (`docs/chain-sdk-requests/12-process-runner-stdin.md`:
   module/course-sized context outgrows argv on every OS). Written once on
@@ -79,7 +97,8 @@ Read order for a task in this capability:
   pipe-buffer deadlock), then closed. Write errors (EPIPE from a child
   that exits early) are swallowed, not surfaced. Omitted means
   `Stdio::null()`, unchanged, not an empty pipe. Deliberately a string
-  only (no `Uint8Array`) and no `handle.write()`: nothing asked for them.
+  only (no `Uint8Array`): nothing asked for it. (`handle.write()` came
+  later, with Lazify's request 03, behind `keepStdinOpen`.)
 - **`id` is generated client-side (JS), not native-side.** A fast
   process (spawn → print → exit) can finish within a single IPC round
   trip. If native generated the id and handed it back from
@@ -212,6 +231,28 @@ capability works there at all against an npm-installed CLI.
 - Windows `\\?\` handling is unit-tested only — see
   `research/WINDOWS.md`.
 
+### `cwd`, `env`, open stdin and tree kill (Lazify request 03) — verified on macOS, 9 October 2026
+
+- Unit tests (`cargo test -p chain-core`): `runs_in_the_given_working_directory`,
+  `extra_environment_is_merged_over_the_inherited_one`,
+  `answers_a_prompt_through_stdin_kept_open` (waits for `(y/N)`, writes
+  `y\n`, closes stdin, then `write` is `Unavailable`),
+  `without_keep_stdin_open_write_is_unavailable`, `kill_stops_the_children_too`
+  (the wrapper's `sleep` child is gone after `kill()`), plus
+  `process_tree`'s own three (wrapper tree, SIGTERM ignored → SIGKILL
+  after the grace period, an already-gone tree).
+- End to end in a throwaway `chain init` app under `chain dev`, through
+  the SDK and IPC: `pwd -P; echo $PORT` with `cwd` in a declared
+  read-only folder and `env: { PORT: "4321" }` printed that folder and
+  `4321`; `cwd: "/etc"` rejected `NOT_GRANTED`; a script printing
+  `Overwrite? (y/N) ` was answered from the `onOutput` callback with
+  `write("y\n")` and printed `got:y`; `sh -c 'sleep 60 & echo $!; wait'`
+  stopped in 122 ms with `{ code: null, killed: true }` and its `sleep`
+  child's pid no longer existed; `write()` after exit rejected
+  `UNAVAILABLE`.
+- Not verified: kill-on-quit (`RunEvent::Exit`) in a real quit, and the
+  `TIMEOUT` path through IPC (unit-tested only via the grace period).
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Decide between the Windows spawn approaches in
@@ -240,6 +281,15 @@ capability works there at all against an npm-installed CLI.
 
 - [ ] Verify `{ fileReference }` arguments on Windows, including a
       ≥ 260-char path in `\\?\` form against a real CLI.
+- [ ] Windows tree kill: `process_tree.rs` uses `taskkill /T /F` (no
+      grace period, never compiled or run on Windows). A Job Object with
+      `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` would also cover the app
+      crashing; decide on real hardware.
+- [ ] Verify kill-on-quit with a real Cmd-Q, and decide whether an app
+      killed by a signal (`chain dev` restarts) should clean up too — it
+      would need a signal handler in the app.
+- [ ] Propagate request 03 to Lazify: the Lazify session runs
+      `chain update` itself (it asked to), after being told what changed.
 
 ## Rules specific to this capability
 
@@ -254,7 +304,9 @@ capability works there at all against an npm-installed CLI.
   NOT line-buffered" above. If a real need for line-buffered delivery
   shows up, that's a contract change to discuss, not something to sneak
   in as an implementation convenience.
-- Never add interactive stdin (`handle.write()`), PTY, or
-  persistent-process support without a real, separate capability request
-  driving it (rule 7) — this one is deliberately one-shot-process-only.
-  `options.stdin` is write-once-then-close and must stay that way.
+- Never add a PTY or persistent-process support here — that's the
+  `terminal` capability. Interactive input stays a pipe, opt-in through
+  `keepStdinOpen`; without it, `options.stdin` is write-once-then-close
+  and must stay that way.
+- Never spawn without `process_tree::lead_own_group` — `kill()`'s tree
+  guarantee depends on the process leading its own group.

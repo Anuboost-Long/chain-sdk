@@ -129,10 +129,46 @@ const capabilityPages: Record<string, { title: string; api: string; href: string
     api: "desktop.processRunner",
     href: "/capabilities/process-runner/",
     summary: "Run a program and stream its output live."
+  },
+  folders: {
+    title: "Folders",
+    api: "desktop.folders",
+    href: "/capabilities/folders/",
+    summary: "Real files in folders the user chose."
+  },
+  terminal: {
+    title: "Terminal",
+    api: "desktop.terminal",
+    href: "/capabilities/terminal/",
+    summary: "Interactive programs that survive a reload."
+  },
+  ports: {
+    title: "Ports",
+    api: "desktop.ports",
+    href: "/capabilities/ports/",
+    summary: "Whether a local TCP port is free."
+  },
+  attention: {
+    title: "Attention",
+    api: "desktop.attention",
+    href: "/capabilities/attention/",
+    summary: "Notifications, focus, and a Dock bounce."
+  },
+  "page-zoom": {
+    title: "Page zoom",
+    api: "desktop.pageZoom",
+    href: "/capabilities/page-zoom/",
+    summary: "Browser-style zoom with real reflow."
+  },
+  "keep-awake": {
+    title: "Keep awake",
+    api: "desktop.keepAwake",
+    href: "/capabilities/keep-awake/",
+    summary: "Stop idle sleep while your app works."
   }
 };
 
-const capabilityOrder = ["platform", "storage", "files", "http", "agent-server", "process-runner"];
+const capabilityOrder = ["platform", "storage", "files", "http", "agent-server", "process-runner", "folders", "terminal", "ports", "attention", "page-zoom", "keep-awake"];
 
 /** Every capability with its macOS/Windows/Linux support, one row each. */
 export function CapabilityTable() {

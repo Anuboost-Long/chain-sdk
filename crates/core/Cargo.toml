@@ -35,6 +35,14 @@ opus-decoder = "0.1"
 # depends on Tauri. See agent-docs/capabilities/files/research/MACOS.md.
 rfd = "0.17"
 raw-window-handle = "0.6"
+# folders: canonical paths without Windows' `\\?\` prefix, and OS change
+# notifications (FSEvents, ReadDirectoryChangesW). Both MIT/Apache-2.0 or CC0.
+dunce = "1"
+notify = "8"
+# terminal: pseudo-terminals (openpty on macOS, ConPTY on Windows), from
+# the WezTerm project. MIT.
+portable-pty = "0.9"
+anyhow = "1"
 # models: SHA-256 of downloads and archive extraction (all MIT/Apache-2.0).
 sha2 = "0.10"
 tar = "0.4"
@@ -88,8 +96,11 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # browser: clearing a session's WKWebsiteDataStore, the page's
 # back/forward state, and closing popups that call window.close(). Same version wry already builds.
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "WKNavigation", "WKUIDelegate"] }
+
 # dev_launch: posix_spawn + dlsym for relaunching a `chain dev` binary
-# responsible for its own permission prompts.
+# responsible for its own permission prompts; process_tree: signalling a
+# spawned process's whole group.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 # vision on Windows: WinRT's Windows.Media.Ocr, called directly — no .NET.

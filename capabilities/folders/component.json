@@ -1,0 +1,16 @@
+{
+  "name": "folders",
+  "description": "Real paths inside folders the user picked or dropped (read-write, remembered across restarts) and folders the app declares read-only in package.json: list, read, atomic write, move, delete and watch, every path checked natively against the grants.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/folders/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify", "mneme"],
+  "generalizable": true
+}

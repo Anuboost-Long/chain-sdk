@@ -3,7 +3,9 @@
 //! Spawns an executable by name + argv array (never a shell string) and
 //! streams its stdout/stderr back incrementally via `on_output`, with a
 //! `ProcessHandle` for `kill()` and a final `on_exit` callback once it's
-//! done. There is no per-OS branching in this file — the Windows npm-shim
+//! done. `kill()` stops the whole tree (see process_tree.rs, where the
+//! per-OS code lives); otherwise there is no per-OS branching in this file
+//! — the Windows npm-shim
 //! risk (see agent-docs/capabilities/process-runner/research/WINDOWS.md)
 //! is a spawn-resolution detail that still needs a real decision, tracked
 //! there, not baked in here yet.
@@ -12,9 +14,12 @@
 //! of stdout means, doesn't parse it, doesn't assume it's line-oriented.
 
 use std::io::{Read, Write};
-use std::process::{Child, Command, Stdio};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
+
+use crate::process_tree;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessStream {
@@ -43,6 +48,10 @@ pub enum ProcessRunnerError {
     NotFound(String),
     /// The resolved file exists but the OS refused to execute it.
     PermissionDenied(String),
+    /// `write()` after stdin was closed, or the process has exited.
+    Unavailable(String),
+    /// `kill()` couldn't stop the whole tree within process_tree::LIMIT.
+    TimedOut(String),
     Other(String),
 }
 
@@ -52,32 +61,69 @@ impl ProcessRunnerError {
             ProcessRunnerError::InvalidArgument(m)
             | ProcessRunnerError::NotFound(m)
             | ProcessRunnerError::PermissionDenied(m)
+            | ProcessRunnerError::Unavailable(m)
+            | ProcessRunnerError::TimedOut(m)
             | ProcessRunnerError::Other(m) => m,
         }
     }
 }
 
+#[derive(Default)]
+pub struct RunOptions {
+    /// Written to stdin as soon as the process starts.
+    pub stdin: Option<String>,
+    /// Keep stdin open after `stdin` for `ProcessHandle::write`, until
+    /// `close_stdin`. Without it, stdin closes after the payload (or is the
+    /// null device when there's none).
+    pub keep_stdin_open: bool,
+    /// Already checked by the caller (an existing folder inside a grant).
+    pub cwd: Option<PathBuf>,
+    /// Set over the inherited environment, after the login-shell `PATH`,
+    /// so a `PATH` here wins.
+    pub env: Vec<(String, String)>,
+}
+
 /// A running (or just-exited) process. `kill()` is the documented,
 /// idempotent way to stop it early.
 pub struct ProcessHandle {
-    child: Arc<Mutex<Child>>,
+    pid: u32,
     killed: Arc<AtomicBool>,
+    // Dropping the sender ends the writer thread, which closes stdin.
+    stdin: Mutex<Option<mpsc::Sender<String>>>,
 }
 
 impl ProcessHandle {
-    /// Idempotent — killing a process that has already exited resolves
-    /// successfully rather than erroring, same reasoning `files.delete()`
+    /// Stops the process and everything it started: SIGTERM to its process
+    /// group, SIGKILL after process_tree::GRACE, `TimedOut` if anything is
+    /// still alive at process_tree::LIMIT. Idempotent — killing a process
+    /// that has already exited succeeds, same reasoning `files.delete()`
     /// and `agent_server`'s `stop()` already use.
     pub fn kill(&self) -> Result<(), ProcessRunnerError> {
         self.killed.store(true, Ordering::SeqCst);
-        let mut guard = self.child.lock().expect("process mutex poisoned");
-        match guard.kill() {
-            Ok(()) => Ok(()),
-            // "InvalidInput" is what std reports when the process has
-            // already exited — not a real failure to report upward.
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
-            Err(e) => Err(ProcessRunnerError::Other(e.to_string())),
-        }
+        process_tree::terminate(self.pid, process_tree::GRACE, process_tree::LIMIT)
+            .map_err(ProcessRunnerError::TimedOut)
+    }
+
+    /// For the app quitting: no grace period, no waiting.
+    pub fn kill_now(&self) {
+        self.killed.store(true, Ordering::SeqCst);
+        process_tree::kill_now(self.pid);
+    }
+
+    /// Queues `text` for the process's stdin. Resolving means queued, not
+    /// read — a process that never reads it is not an error.
+    pub fn write(&self, text: String) -> Result<(), ProcessRunnerError> {
+        let guard = self.stdin.lock().expect("stdin mutex poisoned");
+        let Some(sender) = guard.as_ref() else {
+            return Err(ProcessRunnerError::Unavailable("stdin is closed".to_string()));
+        };
+        sender.send(text).map_err(|_| ProcessRunnerError::Unavailable("stdin is closed".to_string()))
+    }
+
+    /// The process sees EOF once everything already written is delivered.
+    /// Idempotent.
+    pub fn close_stdin(&self) {
+        self.stdin.lock().expect("stdin mutex poisoned").take();
     }
 }
 
@@ -88,12 +134,13 @@ impl ProcessHandle {
 /// exactly once, after both streams have hit EOF and the process has
 /// actually exited (including via `kill()`).
 ///
-/// `stdin`, when given, is written to the child's stdin on its own thread
-/// and then stdin is closed (EOF); `None` keeps stdin the null device.
+/// `options.stdin`, when given, is written to the child's stdin on its own
+/// thread and then stdin is closed (EOF) unless `keep_stdin_open`; with
+/// neither, stdin is the null device.
 pub fn run(
     command: &str,
     args: &[String],
-    stdin: Option<String>,
+    options: RunOptions,
     on_output: impl Fn(ProcessOutputChunk) + Send + Sync + 'static,
     on_exit: impl FnOnce(ProcessExit) + Send + 'static,
 ) -> Result<ProcessHandle, ProcessRunnerError> {
@@ -114,9 +161,16 @@ pub fn run(
     if let Some(path) = login_shell_path() {
         cmd.env("PATH", path);
     }
+    cmd.envs(options.env);
+    if let Some(cwd) = &options.cwd {
+        cmd.current_dir(cwd);
+    }
+    // So kill() reaches whatever the process starts (`npm run dev`'s server).
+    process_tree::lead_own_group(&mut cmd);
     // Null, not an empty pipe, when there's no payload — some CLIs behave
     // differently when stdin is a pipe (see CONTRACT.md's `options.stdin`).
-    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+    let piped_stdin = options.stdin.is_some() || options.keep_stdin_open;
+    cmd.stdin(if piped_stdin { Stdio::piped() } else { Stdio::null() });
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -129,14 +183,27 @@ pub fn run(
     // a child that prints before it has read all its input. A write error
     // (the child exited or closed stdin early — EPIPE) is deliberately
     // ignored: the process still ran, and `on_exit` reports how it ended.
-    // Dropping `child_stdin` at the end of the thread closes it (EOF).
-    if let (Some(payload), Some(mut child_stdin)) = (stdin, child.stdin.take()) {
+    // The thread ends, dropping `child_stdin` (EOF), once every sender is
+    // gone: right after the payload, or at close_stdin() when kept open.
+    let mut stdin_sender = None;
+    if let Some(mut child_stdin) = child.stdin.take() {
+        let (sender, receiver) = mpsc::channel::<String>();
         std::thread::spawn(move || {
-            let _ = child_stdin.write_all(payload.as_bytes());
+            for text in receiver {
+                if child_stdin.write_all(text.as_bytes()).and_then(|()| child_stdin.flush()).is_err() {
+                    break;
+                }
+            }
         });
+        if let Some(payload) = options.stdin {
+            let _ = sender.send(payload);
+        }
+        if options.keep_stdin_open {
+            stdin_sender = Some(sender);
+        }
     }
 
-    let child = Arc::new(Mutex::new(child));
+    let pid = child.id();
     let killed = Arc::new(AtomicBool::new(false));
     let on_output = Arc::new(on_output);
 
@@ -148,19 +215,19 @@ pub fn run(
     let stderr_thread =
         std::thread::spawn(move || read_stream(stderr, ProcessStream::Stderr, &*stderr_output));
 
-    let wait_child = Arc::clone(&child);
     let wait_killed = Arc::clone(&killed);
     std::thread::spawn(move || {
-        // Drain both pipes fully before reaping the exit status, so no
-        // output is ever lost to a race with the process exiting.
+        // Reaped straight away, so kill() sees the group empty once its
+        // members are gone; then both pipes are drained fully before
+        // on_exit, so no output is ever lost to a race with the exit.
+        let status = child.wait();
         let _ = stdout_thread.join();
         let _ = stderr_thread.join();
-        let status = wait_child.lock().expect("process mutex poisoned").wait();
         let code = status.ok().and_then(|s| s.code());
         on_exit(ProcessExit { code, killed: wait_killed.load(Ordering::SeqCst) });
     });
 
-    Ok(ProcessHandle { child, killed })
+    Ok(ProcessHandle { pid, killed, stdin: Mutex::new(stdin_sender) })
 }
 
 fn read_stream<R: Read, F: Fn(ProcessOutputChunk) + Send + Sync>(
@@ -189,7 +256,7 @@ fn read_stream<R: Read, F: Fn(ProcessOutputChunk) + Send + Sync>(
 /// couldn't be run, didn't exit cleanly, timed out, or produced an empty
 /// `PATH` — callers fall back to the inherited `PATH` in that case.
 #[cfg(unix)]
-fn login_shell_path() -> Option<String> {
+pub(crate) fn login_shell_path() -> Option<String> {
     static RESOLVED: OnceLock<Option<String>> = OnceLock::new();
     RESOLVED.get_or_init(resolve_login_shell_path).clone()
 }
@@ -244,6 +311,98 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5)).expect("process did not exit in time")
     }
 
+    fn stdin(text: String) -> RunOptions {
+        RunOptions { stdin: Some(text), ..RunOptions::default() }
+    }
+
+    /// Runs `/bin/sh -c script` to completion and returns its stdout.
+    fn sh_output(script: &str, options: RunOptions) -> String {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let chunks = Arc::new(Mutex::new(Vec::<String>::new()));
+        let chunks_for_output = Arc::clone(&chunks);
+        run("/bin/sh", &["-c".to_string(), script.to_string()], options, move |chunk| {
+            chunks_for_output.lock().unwrap().push(chunk.data);
+        }, move |exit| {
+            let _ = exit_tx.send(exit);
+        })
+        .unwrap();
+        assert_eq!(wait_for_exit(exit_rx).code, Some(0));
+        let output = chunks.lock().unwrap().concat();
+        output
+    }
+
+    #[test]
+    fn runs_in_the_given_working_directory() {
+        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let options = RunOptions { cwd: Some(dir.clone()), ..RunOptions::default() };
+        assert_eq!(sh_output("pwd -P", options).trim(), dir.to_string_lossy());
+    }
+
+    #[test]
+    fn extra_environment_is_merged_over_the_inherited_one() {
+        let options = RunOptions {
+            env: vec![("PORT".to_string(), "4321".to_string()), ("HOME".to_string(), "/elsewhere".to_string())],
+            ..RunOptions::default()
+        };
+        let output = sh_output(r#"printf '%s %s %s' "$PORT" "$HOME" "${PATH:+has-path}""#, options);
+        assert_eq!(output, "4321 /elsewhere has-path");
+    }
+
+    #[test]
+    fn answers_a_prompt_through_stdin_kept_open() {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let (prompt_tx, prompt_rx) = mpsc::channel();
+        let chunks = Arc::new(Mutex::new(String::new()));
+        let chunks_for_output = Arc::clone(&chunks);
+        let options = RunOptions { keep_stdin_open: true, ..RunOptions::default() };
+        let script = "printf 'Overwrite? (y/N) '; read answer; echo \"got $answer\"; cat; echo done";
+        let handle = run("/bin/sh", &["-c".to_string(), script.to_string()], options, move |chunk| {
+            let mut all = chunks_for_output.lock().unwrap();
+            all.push_str(&chunk.data);
+            if all.contains("(y/N)") {
+                let _ = prompt_tx.send(());
+            }
+        }, move |exit| {
+            let _ = exit_tx.send(exit);
+        })
+        .unwrap();
+
+        prompt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        handle.write("y\n".to_string()).unwrap();
+        handle.write("more\n".to_string()).unwrap();
+        handle.close_stdin();
+        handle.close_stdin();
+        assert!(matches!(handle.write("late".to_string()), Err(ProcessRunnerError::Unavailable(_))));
+        assert_eq!(wait_for_exit(exit_rx).code, Some(0));
+        assert_eq!(*chunks.lock().unwrap(), "Overwrite? (y/N) got y\nmore\ndone\n");
+    }
+
+    #[test]
+    fn without_keep_stdin_open_write_is_unavailable() {
+        let handle = run("/bin/cat", &[], stdin("x".to_string()), |_| {}, |_| {}).unwrap();
+        assert!(matches!(handle.write("y".to_string()), Err(ProcessRunnerError::Unavailable(_))));
+    }
+
+    #[test]
+    fn kill_stops_the_children_too() {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let (pid_tx, pid_rx) = mpsc::channel();
+        // A wrapper whose child holds on, like `npm run dev` and its server.
+        let handle = run("/bin/sh", &["-c".to_string(), "sleep 30 & echo $!; wait".to_string()], RunOptions::default(), move |chunk| {
+            if let Ok(pid) = chunk.data.trim().parse::<i32>() {
+                let _ = pid_tx.send(pid);
+            }
+        }, move |exit| {
+            let _ = exit_tx.send(exit);
+        })
+        .unwrap();
+        let grandchild = pid_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        handle.kill().unwrap();
+        assert!(wait_for_exit(exit_rx).killed);
+        assert_ne!(unsafe { libc::kill(grandchild, 0) }, 0, "the wrapper's child survived kill()");
+    }
+
     #[test]
     fn captures_stdout_and_a_clean_exit_code() {
         let (exit_tx, exit_rx) = mpsc::channel();
@@ -253,7 +412,7 @@ mod tests {
         let handle = run(
             "/bin/echo",
             &["hello world".to_string()],
-            None,
+            RunOptions::default(),
             move |chunk| {
                 assert_eq!(chunk.stream, ProcessStream::Stdout);
                 chunks_for_output.lock().unwrap().push(chunk.data);
@@ -283,7 +442,7 @@ mod tests {
         run(
             "/bin/sh",
             &["-c".to_string(), "echo out-message; echo err-message 1>&2".to_string()],
-            None,
+            RunOptions::default(),
             move |chunk| match chunk.stream {
                 ProcessStream::Stdout => stdout_for_output.lock().unwrap().push(chunk.data),
                 ProcessStream::Stderr => stderr_for_output.lock().unwrap().push(chunk.data),
@@ -303,7 +462,7 @@ mod tests {
     #[test]
     fn reports_a_non_zero_exit_code_without_erroring() {
         let (exit_tx, exit_rx) = mpsc::channel();
-        run("/bin/sh", &["-c".to_string(), "exit 7".to_string()], None, |_| {}, move |exit| {
+        run("/bin/sh", &["-c".to_string(), "exit 7".to_string()], RunOptions::default(), |_| {}, move |exit| {
             let _ = exit_tx.send(exit);
         })
         .unwrap();
@@ -323,7 +482,7 @@ mod tests {
                 "-c".to_string(),
                 "printf a; sleep 0.05; printf b; sleep 0.05; printf c".to_string(),
             ],
-            None,
+            RunOptions::default(),
             move |_chunk| {
                 timestamps_for_output.lock().unwrap().push(Instant::now());
             },
@@ -346,7 +505,7 @@ mod tests {
     #[test]
     fn kill_stops_a_long_running_process_early() {
         let (exit_tx, exit_rx) = mpsc::channel();
-        let handle = run("/bin/sh", &["-c".to_string(), "sleep 5".to_string()], None, |_| {}, move |exit| {
+        let handle = run("/bin/sh", &["-c".to_string(), "sleep 5".to_string()], RunOptions::default(), |_| {}, move |exit| {
             let _ = exit_tx.send(exit);
         })
         .unwrap();
@@ -370,7 +529,7 @@ mod tests {
         let chunks_for_output = Arc::clone(&chunks);
 
         // `cat` only exits once it sees EOF, so a clean exit proves stdin was closed.
-        run("/bin/cat", &[], Some("héllo\0world".to_string()), move |chunk| {
+        run("/bin/cat", &[], stdin("héllo\0world".to_string()), move |chunk| {
             chunks_for_output.lock().unwrap().push(chunk.data);
         }, move |exit| {
             let _ = exit_tx.send(exit);
@@ -390,7 +549,7 @@ mod tests {
 
         // `cat` echoes as it reads, so its stdout fills while stdin is still
         // being written — deadlocks if writing blocks reading.
-        run("/bin/cat", &[], Some(payload.clone()), move |chunk| {
+        run("/bin/cat", &[], stdin(payload.clone()), move |chunk| {
             *received_for_output.lock().unwrap() += chunk.data.len();
         }, move |exit| {
             let _ = exit_tx.send(exit);
@@ -407,7 +566,7 @@ mod tests {
         let payload = "x".repeat(1024 * 1024);
 
         // Exits without reading, so the writer hits a broken pipe.
-        run("/bin/sh", &["-c".to_string(), "exit 3".to_string()], Some(payload), |_| {}, move |exit| {
+        run("/bin/sh", &["-c".to_string(), "exit 3".to_string()], stdin(payload), |_| {}, move |exit| {
             let _ = exit_tx.send(exit);
         })
         .unwrap();
@@ -421,7 +580,7 @@ mod tests {
         let chunks = Arc::new(Mutex::new(Vec::<String>::new()));
         let chunks_for_output = Arc::clone(&chunks);
 
-        run("/bin/cat", &[], None, move |chunk| {
+        run("/bin/cat", &[], RunOptions::default(), move |chunk| {
             chunks_for_output.lock().unwrap().push(chunk.data);
         }, move |exit| {
             let _ = exit_tx.send(exit);
@@ -434,7 +593,7 @@ mod tests {
 
     #[test]
     fn rejects_an_empty_command() {
-        match run("", &[], None, |_| {}, |_| {}) {
+        match run("", &[], RunOptions::default(), |_| {}, |_| {}) {
             Err(ProcessRunnerError::InvalidArgument(_)) => {}
             other => panic!("expected InvalidArgument, got {}", other.is_ok()),
         }
@@ -442,7 +601,7 @@ mod tests {
 
     #[test]
     fn rejects_a_nonexistent_command() {
-        match run("chain-sdk-definitely-not-a-real-command", &[], None, |_| {}, |_| {}) {
+        match run("chain-sdk-definitely-not-a-real-command", &[], RunOptions::default(), |_| {}, |_| {}) {
             Err(ProcessRunnerError::NotFound(_)) => {}
             other => panic!("expected NotFound, got {}", other.is_ok()),
         }

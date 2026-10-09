@@ -27,14 +27,25 @@ export interface ProcessExit {
 
 export interface ProcessHandle {
   readonly id: string;
+  /** Stops the process and everything it started; rejects `TIMEOUT` if any of it outlives 5 s (see CONTRACT.md). */
   kill(): Promise<void>;
+  /** Writes to stdin while it runs. Needs `keepStdinOpen`; rejects `UNAVAILABLE` once stdin is closed or the process exited. */
+  write(text: string): Promise<void>;
+  /** Closes stdin, so the process sees EOF. Idempotent. */
+  closeStdin(): Promise<void>;
   /** Resolves once the process exits, however it exits — never rejects (see CONTRACT.md). */
   readonly exited: Promise<ProcessExit>;
 }
 
 export interface ProcessRunOptions {
-  /** Written to the process's stdin as UTF-8, then stdin is closed (EOF). Omitted: the process gets no stdin at all (see CONTRACT.md). */
+  /** Written to the process's stdin as UTF-8, then stdin is closed (EOF) unless `keepStdinOpen`. Omitted: the process gets no stdin at all (see CONTRACT.md). */
   stdin?: string;
+  /** Keep stdin open for `handle.write()` until `handle.closeStdin()`. Default `false`. */
+  keepStdinOpen?: boolean;
+  /** Absolute path of an existing folder inside a `desktop.folders` grant. Default: the app's own working directory. */
+  cwd?: string;
+  /** Set over the inherited environment (which includes the login-shell `PATH`); a `PATH` here wins. */
+  env?: Record<string, string>;
 }
 
 export interface ProcessRunnerApi {

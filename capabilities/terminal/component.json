@@ -1,0 +1,16 @@
+{
+  "name": "terminal",
+  "description": "Interactive programs in a pseudo-terminal, owned by Chain Core so they keep running and buffering numbered output across a page reload: start, attach with a gap-free backlog, write, resize, kill the tree.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/terminal/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

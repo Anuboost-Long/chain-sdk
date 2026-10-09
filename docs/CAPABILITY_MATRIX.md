@@ -12,6 +12,12 @@ to see what actually exists vs. what's just planned.
 | Http            | 🧪    | ⏳      | ⏳    | Draft    |
 | AgentServer     | 🧪    | ⏳      | ⏳    | Draft    |
 | ProcessRunner   | 🧪    | ⏳      | ⏳    | Draft    |
+| Folders         | 🧪    | ⏳      | ⏳    | Draft    |
+| Terminal        | 🧪    | ⏳      | ⏳    | Draft    |
+| Ports           | 🧪    | ⏳      | ⏳    | Draft    |
+| Attention       | ⚠     | ⏳      | ⏳    | Draft    |
+| PageZoom        | 🧪    | ⏳      | ⏳    | Draft    |
+| KeepAwake       | 🧪    | ⏳      | ⏳    | Draft    |
 | Microphone      | 🧪    | ⏳      | ⏳    | Draft    |
 | Vision          | 🧪    | ⚠       | ⏳    | Draft    |
 | Speech          | 🧪    | ⏳      | ⏳    | Draft    |
@@ -101,6 +107,46 @@ candidate fixes documented, none implemented yet). Native stays
 deliberately generic — no AI-CLI/output-format awareness, and no
 compiled-in executable allowlist (that's Phase 28's job) — see that
 capability's `CONTRACT.md` for why.
+
+Lazify's request 03 extended `process-runner` with `cwd` (checked
+against `folders` grants), `env`, `keepStdinOpen` plus `handle.write()`,
+and a `kill()` that stops the whole process tree (SIGTERM, then SIGKILL
+after 2 s, `TIMEOUT` at 5 s), all verified on macOS through a real app.
+Windows' tree kill is `taskkill /T /F`, written but never run.
+
+`folders` (Lazify requests 01 and 02, and Mneme's request 11) gives real
+paths inside folders the user picked or dropped (read-write, persisted)
+and folders the app declares read-only in `package.json`
+(`chain.readOnlyFolders`), with every path checked natively. It's
+verified end to end on macOS: listing, reads, byte ranges, atomic
+writes, moves, Trash, watching, and the picker. Drag-and-drop granting
+and a real privacy-protection denial weren't exercised. Lazify's request 06 added `appFolder("data" | "temp")`, the
+app's own read-write folders with real paths, verified with a shadow
+`git --git-dir` repo run through `process-runner`. Windows isn't
+started (`research/WINDOWS.md`).
+
+`terminal` (Lazify request 04) runs programs in a pseudo-terminal owned
+by Chain Core. Verified on macOS: a session kept running through a real
+page reload, and `attach()` replayed its output contiguously from the
+new page. Windows (ConPTY through `portable-pty`) is unverified.
+
+`ports` (Lazify request 05) answers whether a dev server could bind a
+TCP port now, by binding it on `0.0.0.0`, `127.0.0.1`, `::` and `::1`.
+Verified on macOS against real Node servers on `::1` and `127.0.0.1`,
+both of which an Electron-style `0.0.0.0` probe misses.
+
+`attention` (Lazify request 07) is Partial on macOS. Focus, focus
+changes and the Dock bounce work and are verified. Notifications are
+implemented (`UNUserNotificationCenter`), but they work only in a
+`chain build` app, and on the development machine macOS refused every
+ad-hoc-signed test bundle (`UNErrorDomain` 1). The shown/click path is
+unverified, and the refusal surfaces as `{ outcome: "failed", message }`.
+
+`page-zoom` (Lazify request 08) is the webview's own page zoom,
+verified on macOS to reflow and scale `devicePixelRatio` and to survive
+a reload. `keep-awake` (request 09) is one IOKit power assertion,
+verified with `pmset` to appear, be replaced, disappear on `stop()`, and
+be released when the app is killed.
 
 `files.pick()` (mneme request 16 — the OS open panel attached to the
 app window as a sheet, returning names and bytes, never paths),
