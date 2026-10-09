@@ -176,7 +176,7 @@ export function patchCargoToml(raw: string, ctx: ScaffoldContext): string {
   // like chainPackageSpec's: it has to match the checkout's templates.
   const nativeDir = path.join(ctx.target, ".chain/native");
   const depLine =
-    raw.match(/^chain-core = \{ path = .*/m)?.[0] ??
+    /^chain-core = \{ path = .*/m.exec(raw)?.[0] ??
     (ctx.checkout
       ? `chain-core = { path = "${relativeTo(nativeDir, path.join(ctx.checkout, "crates/core"))}" }`
       : `chain-core = { git = "${CHAIN_CORE_GIT_URL}", rev = "${CHAIN_CORE_REV}" }`);
@@ -239,6 +239,7 @@ export const TRACKED_FILES: TrackedFile[] = [
   { relPath: ".chain/native/build.rs", kind: "template", templateName: "build.rs" },
   { relPath: ".chain/native/src/browser.rs", kind: "template", templateName: "browser.rs" },
   { relPath: ".chain/native/src/window.rs", kind: "template", templateName: "window.rs" },
+  { relPath: ".chain/native/src/pdf.rs", kind: "template", templateName: "pdf.rs" },
   {
     relPath: ".chain/native/src/dev_inspector.rs",
     kind: "template",

@@ -24,8 +24,11 @@ reqwest = "0.12"
 tiny_http = "0.12"
 # Audio decoding for model-based transcription (src/sherpa/). MPL-2.0,
 # file-level copyleft: using it unmodified carries no obligation beyond
-# its notice. No Opus decoder exists in it — see speech/research/WINDOWS.md.
+# its notice. It has no Opus decoder (not in 0.6 either), hence opus-decoder:
+# pure Rust (MIT/Apache-2.0), passes RFC 8251's conformance vectors, and
+# needs no cmake, unlike the libopus bindings — see speech/research/MACOS.md.
 symphonia = { version = "0.5", default-features = false, features = ["aac", "isomp4", "mp3", "wav", "pcm", "flac", "ogg", "vorbis", "mkv", "caf", "aiff"] }
+opus-decoder = "0.1"
 # files::pick — the OS open panel attached to the app window (a sheet on
 # macOS via beginSheetModalForWindow, not wry's app-modal runModal). The
 # parent comes in through raw-window-handle's traits, so this crate never

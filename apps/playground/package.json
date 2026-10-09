@@ -29,7 +29,8 @@
       "titleBarStyle": "overlay",
       "titleBarSize": "large",
       "backgroundColor": "#1d2b53",
-      "appearance": "dark"
+      "appearance": "dark",
+      "showWhen": "firstPaint"
     }
   }
 }

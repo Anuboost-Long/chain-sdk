@@ -2,13 +2,14 @@
 // chain-sdk): the app window's chrome, its insets and full-screen state.
 // The startup options are package.json's "chain.window", compiled in
 // (build.rs points CHAIN_PACKAGE_JSON at it) and applied in setup, before
-// the first frame. Options, defaults and the AppKit work are
+// the first frame — including when the window first shows (showWhen),
+// which keeps it undrawn until then. Options, defaults and the AppKit work are
 // chain_core::window. See agent-docs/capabilities/window/.
 
 use std::collections::HashMap;
 use std::sync::{mpsc, Mutex};
 
-use chain_core::window::{self as core, Appearance, Chrome, Insets, ResolvedOptions};
+use chain_core::window::{self as core, Appearance, Chrome, FirstShow, Insets, ResolvedOptions, ShowWhen};
 use tauri::{Emitter, Manager, Runtime, Theme, WindowEvent};
 
 const PACKAGE_JSON: &str = include_str!(env!("CHAIN_PACKAGE_JSON"));
@@ -23,6 +24,8 @@ struct Tracked {
     chrome: Chrome,
     insets: Insets,
     full_screen: bool,
+    /// What the window waits for before its first appearance; None once it has appeared.
+    awaiting: Option<ShowWhen>,
 }
 
 fn is_app_window(label: &str) -> bool {
@@ -108,10 +111,36 @@ fn report<R: Runtime>(window: &tauri::Window<R>, tracked: &mut Tracked) {
     }
 }
 
+fn set_undrawn<R: Runtime>(window: &tauri::Window<R>, undrawn: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    core::set_undrawn(window.ns_window().map_err(|e| e.to_string())?, undrawn);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, undrawn);
+    Ok(())
+}
+
+/// The window's first appearance; nothing once it has appeared. The lock
+/// isn't held while AppKit changes the window.
+fn show<R: Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
+    on_main(window, |window| {
+        let state = window.state::<WindowState>();
+        let awaiting = state.windows.lock().expect("window state poisoned").get_mut(window.label()).and_then(|t| t.awaiting.take());
+        if awaiting.is_none() {
+            return Ok(());
+        }
+        set_undrawn(window, false)?;
+        let _ = window.emit_to(window.label(), "chain://window-shown", ());
+        Ok(())
+    })?
+}
+
 /// Applies package.json's "chain.window" to the windows Tauri created
-/// from tauri.conf.json. Without options it changes nothing at all.
+/// from tauri.conf.json. Without options it changes nothing at all. Setup
+/// runs before the first frame, so a window kept undrawn never flashes.
 pub fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let chrome = Chrome::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
+    let first_show = FirstShow::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
+    let awaiting = Some(first_show.effective_when()).filter(|when| *when != ShowWhen::Immediately);
     for (label, window) in app.windows() {
         if !is_app_window(&label) {
             continue;
@@ -119,10 +148,19 @@ pub fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::
         if chrome != Chrome::default() {
             apply(&window, &chrome, &Chrome::default())?;
         }
+        if awaiting.is_some() {
+            set_undrawn(&window, true)?;
+            let window = window.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(first_show.timeout);
+                let _ = show(&window);
+            });
+        }
         let tracked = Tracked {
             insets: measure(&window, &chrome),
             full_screen: window.is_fullscreen().unwrap_or(false),
             chrome: chrome.clone(),
+            awaiting,
         };
         app.state::<WindowState>().windows.lock().expect("window state poisoned").insert(label, tracked);
     }
@@ -202,6 +240,27 @@ pub fn window_set_drag_regions(webview: tauri::Webview, regions: Vec<core::Rect>
         let _ = (webview, regions, holes);
         Ok(false)
     }
+}
+
+#[tauri::command]
+pub fn window_show(window: tauri::Window) -> Result<(), String> {
+    show(&window)
+}
+
+#[tauri::command]
+pub fn window_is_shown(window: tauri::Window, state: tauri::State<WindowState>) -> bool {
+    let windows = state.windows.lock().expect("window state poisoned");
+    windows.get(window.label()).is_none_or(|t| t.awaiting.is_none())
+}
+
+/// The SDK, once its page has drawn a frame — on every load, reloads too.
+#[tauri::command]
+pub fn window_page_painted(window: tauri::Window, state: tauri::State<WindowState>) -> Result<(), String> {
+    let awaiting = state.windows.lock().expect("window state poisoned").get(window.label()).and_then(|t| t.awaiting);
+    if awaiting == Some(ShowWhen::FirstPaint) {
+        show(&window)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

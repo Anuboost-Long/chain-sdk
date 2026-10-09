@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager};
 
 mod browser;
 mod dev_inspector;
+mod pdf;
 mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -91,9 +92,11 @@ fn storage_rollback(app: tauri::AppHandle, state: tauri::State<StorageState>, tr
 }
 
 // A reloaded or navigated page can't finish what the previous one started.
-// The browser capability's webviews are other sites, not the app.
+// The browser capability's webviews are other sites, and the pdf
+// capability's are documents being rendered, not the app.
 fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
-    if webview.label().starts_with(chain_core::browser::LABEL_PREFIX) {
+    let label = webview.label();
+    if label.starts_with(chain_core::browser::LABEL_PREFIX) || label.starts_with(chain_core::pdf::LABEL_PREFIX) {
         return;
     }
     rollback_abandoned_transaction(webview, payload);
@@ -272,6 +275,66 @@ async fn files_pick(
         body.extend_from_slice(&file.bytes);
     }
     Ok(tauri::ipc::Response::new(body))
+}
+
+// Bridges the share capability contract (capabilities/share in
+// chain-sdk). The files are copied, under the names the recipient sees,
+// into a folder of their own in the cache, so the app may delete its own
+// as soon as show() resolves; the folder goes on cancel, else a day later
+// (a service like Copy holds only its URL). See
+// agent-docs/capabilities/share/CONTRACT.md.
+fn to_share_command_error(e: chain_core::share::ShareError) -> String {
+    use chain_core::share::ShareError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Other(m) => m,
+    }
+}
+
+#[tauri::command]
+fn share_availability() -> chain_core::share::Availability {
+    chain_core::share::availability()
+}
+
+#[tauri::command]
+async fn share_show(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    files_state: tauri::State<'_, FilesState>,
+    files: serde_json::Value,
+    options: Option<serde_json::Value>,
+) -> Result<chain_core::share::ShareResult, String> {
+    use chain_core::share;
+    let shared = share::parse_files(files).map_err(to_share_command_error)?;
+    let options = share::ShareOptions::parse(options).map_err(to_share_command_error)?;
+    let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("chain-share");
+    share::sweep(&root);
+    let (folder, copies) =
+        with_files(&app, &files_state, |files| Ok(share::stage(files, &root, &shared)))?.map_err(to_share_command_error)?;
+
+    let (tx, rx) = mpsc::channel();
+    let done: share::ShowDone = Box::new(move |result| {
+        let _ = tx.send(result);
+    });
+    webview
+        .with_webview(move |page| {
+            #[cfg(target_os = "macos")]
+            share::show(page.inner(), &folder, &copies, &options, done);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = page;
+                share::show(std::ptr::null_mut(), &folder, &copies, &options, done);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "the share menu closed without an answer".to_string())?
+        .map_err(to_share_command_error)
 }
 
 // Bridges the http capability contract (capabilities/http in
@@ -1036,6 +1099,7 @@ fn to_speech_command_error(e: chain_core::speech::SpeechError) -> String {
     match e {
         Unsupported(m) => format!("UNSUPPORTED: {m}"),
         Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
         PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
         Cancelled => "CANCELLED: the transcription was cancelled".to_string(),
         Other(m) => m,
@@ -1211,6 +1275,7 @@ pub fn run() {
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
         .manage(window::WindowState::default())
         .on_window_event(window::on_window_event)
+        .manage(pdf::PdfState::default())
         .setup(|_app| {
             window::setup(_app)?;
             _app.manage(dev_inspector::InspectorState::default());
@@ -1235,6 +1300,8 @@ pub fn run() {
             files_save,
             files_open,
             files_reveal,
+            share_availability,
+            share_show,
             http_request,
             http_request_bytes,
             agent_server_start,
@@ -1286,6 +1353,11 @@ pub fn run() {
             window::window_set_drag_regions,
             window::window_start_drag,
             window::window_title_bar_double_click,
+            window::window_show,
+            window::window_is_shown,
+            window::window_page_painted,
+            pdf::pdf_availability,
+            pdf::pdf_render,
             __chain_inspector_report
         ]))
         .run(tauri::generate_context!())

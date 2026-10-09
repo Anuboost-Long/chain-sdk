@@ -21,6 +21,8 @@ to see what actually exists vs. what's just planned.
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
 | Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
 | Window          | 🧪    | ⚠       | ⚠     | Draft    |
+| Pdf             | 🧪    | ⏳      | ⏳    | Draft    |
+| Share           | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -202,8 +204,12 @@ on the first frame, the native bar sizes (32/40/52) with buttons where
 AppKit puts them through repeated zooms, a custom button position held
 through zooms and reset, click routing by AppKit hit-testing (drag areas
 to the native drag view, page and window buttons to themselves), and the
-window colour behind the page. A physical drag/double-click and full
-screen with real events are still to be confirmed. Windows and Linux are
-⚠: only the portable subset (standard/hidden, appearance, background,
-drag, full screen) applies, through Tauri's own calls, never run there
+window colour behind the page. Request 40's `showWhen` (`firstPaint` /
+`showCalled` with a `showTimeout`) is verified there too: the window
+stays undrawn while the page paints, then appears drawn, in front and
+focused; reloads never hide it. A physical drag/double-click, full
+screen with real events, and a person watching a real launch for a
+white frame are still to be confirmed. Windows and Linux are ⚠: only
+the portable subset (standard/hidden, appearance, background, drag,
+full screen) applies, `showWhen` falls back to `immediately`, through Tauri's own calls, never run there
 (`agent-docs/capabilities/window/research/WINDOWS.md`).

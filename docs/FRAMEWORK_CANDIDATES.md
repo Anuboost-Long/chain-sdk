@@ -403,12 +403,13 @@ Possible package:
 
 Used by:
 mneme (request 38 — run its dark nav bar to the top of the window with
-the window buttons on it, instead of under macOS 27's solid title bar)
+the window buttons on it, instead of under macOS 27's solid title bar;
+request 40 — show the window only once its launch screen has painted)
 
 Generalizable:
 Yes — every desktop app with its own top bar (the Notion/Linear/VS Code
 look), and any app that wants its window colours right before the page
-paints
+paints, or its window to appear already drawn
 
 Contract:
 Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contract.ts`)
@@ -416,13 +417,63 @@ Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contra
 macOS:
 Implemented: objc2 property sets in `crates/core/src/window.rs`, a Swift
 drag view, toolbar-backed bar sizes and button placer in
-`crates/core/swift/ChainWindow.swift`; verified in the playground
+`crates/core/swift/ChainWindow.swift`; `showWhen` keeps the window
+undrawn (alpha 0) until first paint/`show()`/timeout; verified in the
+playground
 
 Windows:
 Portable subset through Tauri calls (hidden = no frame, theme,
-background, drag, full screen); overlay falls back; never run —
+background, drag, full screen); overlay and `showWhen` fall back; never run —
 checklist in research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
 
+## Pdf
+
+Used by:
+mneme (request 41 — "Share as PDF" for pages, summaries and flashcard
+decks)
+
+Generalizable:
+Yes — any app that exports reports, notes or invoices as PDF from its
+own HTML
+
+Contract:
+Draft (`agent-docs/capabilities/pdf/CONTRACT.md`, `capabilities/pdf/contract.ts`)
+
+macOS:
+Implemented: a hidden Tauri webview printed through WKWebView's
+`printOperation`, redrawn with CoreText header/footer, metadata and
+links in `crates/core/swift/ChainPdf.swift`; verified in the
+playground. Complex scripts (Khmer, Arabic, Devanagari) don't copy or
+search — a Quartz limitation, reported by `availability()`
+
+Windows:
+Not started — WebView2 `PrintToPdf`, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Share
+
+Used by:
+mneme (request 42 — send the PDF from "Share as PDF" by AirDrop,
+Messages or Mail)
+
+Generalizable:
+Yes — any app that makes files people send on
+
+Contract:
+Draft (`agent-docs/capabilities/share/CONTRACT.md`, `capabilities/share/contract.ts`)
+
+macOS:
+Implemented: `NSSharingServicePicker` in
+`crates/core/swift/ChainShare.swift` over staged, renamed copies;
+verified in the playground except picking a service (needs a person)
+
+Windows:
+Not started — `DataTransferManager` share UI, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)

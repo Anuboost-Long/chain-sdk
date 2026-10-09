@@ -4,7 +4,8 @@
 //!   capability's SpeechAnalyzer bridge (src/speech.rs), vision's
 //!   RecognizeDocumentsRequest bridge (src/vision.rs) and the audio
 //!   recorder's Core Audio capture (src/audio_recorder.rs) and the window
-//!   capability's drag regions (src/window.rs). Needs
+//!   capability's drag regions (src/window.rs), the pdf capability's
+//!   renderer (src/pdf.rs) and the share menu (src/share.rs). Needs
 //!   `swiftc`, which every Mac that can build a Tauri app already has
 //!   through the Xcode Command Line Tools.
 //! - Every desktop target: fetches sherpa-onnx's official **no-TTS** static
@@ -35,6 +36,8 @@ fn main() {
     println!("cargo:rerun-if-changed=swift/ChainVision.swift");
     println!("cargo:rerun-if-changed=swift/ChainRecorder.swift");
     println!("cargo:rerun-if-changed=swift/ChainWindow.swift");
+    println!("cargo:rerun-if-changed=swift/ChainPdf.swift");
+    println!("cargo:rerun-if-changed=swift/ChainShare.swift");
     println!("cargo:rerun-if-env-changed=CHAIN_SHERPA_ONNX_ARCHIVE_DIR");
     println!("cargo::rustc-check-cfg=cfg(chain_no_sherpa)");
     link_sherpa_onnx();
@@ -202,7 +205,7 @@ fn build_swift_bridge() {
     let status = Command::new("swiftc")
         .args(["-emit-library", "-static", "-parse-as-library", "-O", "-swift-version", "5"])
         .args(["-module-name", "ChainSwift", "-target", &target, "-sdk", sdk.trim()])
-        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift", "swift/ChainRecorder.swift", "swift/ChainWindow.swift"])
+        .args(["swift/ChainSpeech.swift", "swift/ChainVision.swift", "swift/ChainRecorder.swift", "swift/ChainWindow.swift", "swift/ChainPdf.swift", "swift/ChainShare.swift"])
         .arg("-o")
         .arg(out_dir.join("libChainSwift.a"))
         .status()
@@ -223,7 +226,7 @@ fn build_swift_bridge() {
     for path in info["paths"]["runtimeLibraryPaths"].as_array().into_iter().flatten() {
         println!("cargo:rustc-link-search=native={}", path.as_str().unwrap_or_default());
     }
-    for framework in ["Foundation", "AVFoundation", "Speech", "Vision", "ImageIO", "CoreGraphics", "CoreAudio", "AppKit"] {
+    for framework in ["Foundation", "AVFoundation", "Speech", "Vision", "ImageIO", "CoreGraphics", "CoreAudio", "AppKit", "WebKit", "CoreText"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }

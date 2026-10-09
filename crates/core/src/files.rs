@@ -420,7 +420,7 @@ fn is_valid_reference(reference: &str) -> bool {
 /// resist collision attacks) hashed together with the current time — good
 /// enough uniqueness for a filename without pulling in a `uuid`/`rand`
 /// crate just for this.
-fn generate_id() -> String {
+pub(crate) fn generate_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())

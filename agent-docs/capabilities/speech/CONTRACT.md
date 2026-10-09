@@ -3,8 +3,9 @@
 ## What this is
 
 On-device transcription of a recording the app already stored with
-`desktop.files`. Requested by mneme (request 19, Phase 17
-"Speech-to-Text"). **Audio never leaves the machine** — there is no
+`desktop.files`, audio or video. Requested by mneme (request 19, Phase 17
+"Speech-to-Text"; video files and Opus in request 39, Phase 42 "Import
+Anything"). **Audio never leaves the machine** — there is no
 server fallback, ever, including when the on-device path is unavailable.
 
 ## `desktop.speech.transcribe(reference, options?, onProgress?)`
@@ -17,19 +18,35 @@ transcribe(
 ): Promise<{ text; segments: { startMs; endMs; text }[]; locale }>
 ```
 
-- Input: any audio file the OS can read — `MediaRecorder`'s `audio/mp4`
-  AAC (request 18), m4a, mp3, wav, caf, aiff. A reference, not bytes: an
+- Input: an audio file, or a video file's first sound track — with every
+  engine, at least:
+
+  | Container | Sound |
+  | --- | --- |
+  | MP4, MOV, M4V (video), m4a | AAC |
+  | WebM, Matroska (`.mkv`), audio or video | Opus, Vorbis |
+  | Ogg (`.opus`, `.ogg`) | Opus, Vorbis |
+  | mp3, wav, flac, caf, aiff | their usual codecs |
+
+  `MediaRecorder`'s `audio/mp4` AAC (request 18) and its WebM/Opus both
+  work. The OS engine also takes anything else the OS can decode. The
+  picture is ignored; only the sound is read. A reference, not bytes: an
   hour of audio shouldn't cross IPC.
 - Handles long recordings. An hour of speech takes about a minute on
   Apple Silicon, and timestamps are continuous from the start of the file.
 - `text` — the whole transcript, punctuated, sentences joined by spaces.
 - `segments` — phrase-sized pieces in order: a new one starts at a pause
   of 0.8 s or more, at a sentence end once the segment is 3 s long, and
-  no segment runs past 15 s. `startMs`/`endMs` are offsets into the file.
+  no segment runs past 15 s. `startMs`/`endMs` are offsets from the start
+  of the file, video files included (a sound track that starts late keeps
+  its offset).
 - `locale` — the BCP-47 locale actually used (a requested `"en"` may come
   back as `"en-US"`).
-- `onProgress` is called with growing fractions and a final `1`.
-  Fractions are estimates from recognized-audio time; they may jump.
+- `onProgress` is called with growing fractions and a final `1`, over
+  the length of the sound, for video files as for audio. Fractions are
+  estimates; they may jump. A file that doesn't state its length
+  (browser-recorded WebM often doesn't) is measured by how much of it
+  has been read.
 - Audio with no speech resolves `{ text: "", segments: [] }`.
 - One transcription per app at a time.
 
@@ -46,9 +63,9 @@ engine: {
 }
 ```
 
-Runs sherpa-onnx (compiled into the app) over the file: decode (AAC/m4a,
-mp3, wav, flac, ogg/vorbis, caf, aiff — **not Opus**), resample to 16 kHz,
-cut speech with the VAD, recognize each piece. Same `Transcript` shape;
+Runs sherpa-onnx (compiled into the app) over the file: decode its first
+sound track (the containers and codecs in the table above), resample to
+16 kHz, cut speech with the VAD, recognize each piece. Same `Transcript` shape;
 `segments` are the speech pieces. Works on every OS the engine is built
 for, including Windows. `cancel()` and the one-at-a-time rule apply
 unchanged. `locale` picks the language for Whisper/SenseVoice (first
@@ -73,7 +90,10 @@ installed.
 ## Errors (`ChainErrorCode`)
 
 - `NOT_FOUND` — `reference` isn't a stored file, or the `engine`'s model
-  or one of its files isn't installed.
+  or one of its files isn't installed, or **the file has no sound track**
+  (a video without sound; the message says "the file has no sound track").
+  This is how an app tells "nothing to transcribe" from an unreadable file,
+  which is `NATIVE_FAILURE`.
 - `INVALID_ARGUMENT` — an `engine` file name that isn't a plain relative path.
 - `UNAVAILABLE` — another transcription is running.
 - `UNSUPPORTED` — no on-device model exists for the locale (the message
@@ -82,8 +102,8 @@ installed.
 - `PERMISSION_DENIED` — before macOS 26 only: the user refused speech
   recognition, or Siri & Dictation is off (the message says which setting).
 - `CANCELLED` — after `cancel()`.
-- `NATIVE_FAILURE` — anything else, such as an unreadable audio file; the
-  message is the OS's.
+- `NATIVE_FAILURE` — anything else, such as a file that isn't audio or
+  video, or a sound track in a codec neither the OS nor Chain decodes.
 
 ## Declaring speech recognition
 
@@ -105,3 +125,5 @@ That emits `NSSpeechRecognitionUsageDescription` (see
 - No speaker labels, word-level timings, alternatives or confidence.
 - No cloud recognition, ever.
 - No translation or summarizing — apps do that on the text.
+- No extracting a video's sound to its own file, and no reading text
+  shown in the picture (that's `desktop.vision` on a frame the app grabs).

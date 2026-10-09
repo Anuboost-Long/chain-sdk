@@ -83,6 +83,21 @@ a borderless window loses its rounded corners, shadow and resize edges.
   runs inline there; AppKit can send window events synchronously while
   options change, so the state lock is never held across AppKit calls.
 
+- **Keeping the window hidden until the page paints (request 40)**:
+  an ordered-out window (Tauri `visible: false` / `hide()`) gets no
+  rendering from WebKit — no animation frames, nothing painted — so the
+  first frame would only be drawn after showing, which is the white
+  flash again. Instead the window stays ordered in but undrawn:
+  `alphaValue = 0` (sent with `msg_send!`; objc2-app-kit binds it
+  behind a feature chain-core doesn't enable) and
+  `ignoresMouseEvents = YES`. WebKit kept rendering it (rAF fired,
+  page painted within ~300 ms) and the app launched as usual: active,
+  window key. Done in `setup`, which runs before the run loop commits
+  the first frame (Tauri builds config windows, then calls setup, in
+  one call), so nothing is drawn first. Showing restores alpha in
+  place — no `makeKeyAndOrderFront`, so no activation beyond the
+  launch's own.
+
 ## Not verified
 
 - A physical drag and double-click on `ChainDragView` (no Accessibility

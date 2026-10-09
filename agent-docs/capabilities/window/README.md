@@ -5,7 +5,7 @@
 The app window's chrome, set in the app's `package.json` for the first
 frame and changeable at runtime. Requested by mneme (request 38) after
 macOS 27 drew the default title bar as a solid strip over its own nav
-bar.
+bar; request 40 added when the window first shows.
 
 - **Startup**: the template's `build.rs` points `CHAIN_PACKAGE_JSON` at
   the nearest `package.json`; `window.rs` compiles it in, and
@@ -19,6 +19,17 @@ bar.
   AppKit's own layout pass) in `crates/core/swift/ChainWindow.swift`.
   Appearance and background colour are Tauri calls; the WKWebView's own
   background is turned off while a colour is set.
+- **First show** (`showWhen`, `showTimeout`): startup-only keys,
+  `chain_core::window::FirstShow`, stripped before the chrome is parsed
+  and refused by `setOptions()`. Unless `immediately`, `setup` makes
+  the window undrawn (`set_undrawn`: alpha 0, clicks pass through) —
+  not ordered out, because WebKit stops rendering an ordered-out window
+  and the app must launch as usual. Showing restores alpha in place, so
+  focus and order are a normal launch's. `Tracked.awaiting` holds what
+  the window waits for; a timer thread, `window_show`, or the SDK's
+  `window_page_painted` (two animation frames after it loads, on every
+  page load) show it once, emitting `chain://window-shown`. Reloads
+  find `awaiting` empty and change nothing.
 - **Drag regions**: the SDK (`packages/sdk/src/window.ts`) measures
   `data-chain-drag-region` elements and their holes (interactive
   elements, `="false"`) and sends them on every layout change. On macOS
@@ -56,6 +67,21 @@ await desktop.window.setOptions({ appearance: "light", backgroundColor: "#f7f5f0
 const off = desktop.window.onFullScreenChange((full) => { /* ... */ });
 ```
 
+Show the window once the page has drawn (no white frame before a dark
+launch screen), or when the app says so:
+
+```json
+"chain": { "window": { "showWhen": "firstPaint", "showTimeout": 3000 } }
+```
+
+```ts
+// "showCalled": show once the data is in; calling it again does nothing.
+await desktop.window.show();
+// Start a launch animation when the window is actually visible.
+if (await desktop.window.isShown()) start();
+else desktop.window.onShown(start);
+```
+
 Restart `chain dev` after editing `package.json`'s options. Prefer
 `titleBarSize` over `windowButtons.position` for a native feel. Full
 semantics: `CONTRACT.md`; per-platform support: `availability()`.
@@ -68,5 +94,6 @@ semantics: `CONTRACT.md`; per-platform support: `availability()`.
 - `crates/core/build.rs` — compiles the Swift file, links AppKit
 - `packages/cli/templates/window.rs` (copy: `apps/playground/src-tauri/src/window.rs`) — Tauri commands, setup, window events
 - `packages/cli/templates/build.rs`, `lib.rs` — `CHAIN_PACKAGE_JSON`, wiring
-- `packages/sdk/src/window.ts` — API, drag-region measuring, CSS variables
+- `packages/sdk/src/window.ts` — API, drag-region measuring, CSS variables, the first-paint signal
 - `research/MACOS.md` (measurements, what didn't work), `research/WINDOWS.md`
+- `apps/playground/index.html` + `src/launchScreen.ts` — a worked launch screen: inline HTML/CSS so it's the first frame with `firstPaint`, progress animating only after `onShown`, dismissed once the app has loaded

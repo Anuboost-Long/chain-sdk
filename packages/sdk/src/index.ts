@@ -5,8 +5,10 @@ import { embeddings } from "./embeddings";
 import { files } from "./files";
 import { http } from "./http";
 import { models } from "./models";
+import { pdf } from "./pdf";
 import { platform } from "./platform";
 import { processRunner } from "./process-runner";
+import { share } from "./share";
 import { speech } from "./speech";
 import { storage } from "./storage";
 import { tts } from "./tts";
@@ -31,7 +33,9 @@ export const desktop = {
   audioRecorder,
   browser,
   embeddings,
-  window: appWindow
+  window: appWindow,
+  pdf,
+  share
 };
 
 export { sql } from "./storage-table";
@@ -157,6 +161,8 @@ export type {
   WindowApi,
   WindowAvailability,
   WindowOptions,
+  WindowStartupOptions,
+  ShowWhen,
   WindowButtonsOptions,
   WindowButtonsPosition,
   WindowAppearance,
@@ -167,3 +173,22 @@ export type {
   TitleBarSize,
   TitleBarStyle
 } from "./contracts/window";
+export type {
+  PdfApi,
+  PdfAvailability,
+  RenderPdfOptions,
+  RenderedPdf,
+  PaperSize,
+  PaperDimensions,
+  PageOrientation,
+  PageMargins,
+  PageMarginText
+} from "./contracts/pdf";
+export type {
+  ShareApi,
+  ShareAvailability,
+  ShareOptions,
+  ShareResult,
+  ShareAnchor,
+  SharedFile
+} from "./contracts/share";

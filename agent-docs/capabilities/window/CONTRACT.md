@@ -8,7 +8,9 @@ chrome sits over its page. Structural contract:
 
 Requested by mneme (request 38): on macOS 27 the default title bar draws
 as a solid strip above mneme's own dark nav bar, and an app may not
-touch Tauri's window options itself.
+touch Tauri's window options itself. Request 40 added when the window
+first shows: a dark page showed a white frame (the startup background)
+before its launch screen.
 
 ## Defaults: today's window
 
@@ -25,7 +27,7 @@ The same `WindowOptions` shape is set two ways:
   into the app and applied before the window's first frame, so there's
   no flash of the standard bar or of a white background. An invalid
   value (unknown key, unknown style, malformed colour, negative
-  position) stops the app at startup with a message naming the key —
+  position or timeout) stops the app at startup with a message naming the key —
   `chain dev` shows it on the first run.
 - **At runtime**, `setOptions(options)` on the window the calling page
   is in. Only the fields given change; `windowButtons` merges field by
@@ -94,6 +96,58 @@ The window's own colour (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`): what
 shows before the page paints, behind a transparent page, and in a
 `transparent` title bar. Default `null`: the OS default. The page's own
 background still paints over it.
+
+## When the window first shows
+
+Two startup-only keys in package.json's `"chain.window"`
+(`WindowStartupOptions`). `setOptions()` rejects them with
+`INVALID_ARGUMENT`: they decide the very first moment, so runtime is too
+late.
+
+- **`showWhen`**
+  - `"immediately"` (default): today's window — it appears as the app
+    starts, before the page has drawn anything.
+  - `"firstPaint"`: the window stays hidden until the page has drawn
+    its first frame, then appears already drawn. "Drawn" means the SDK
+    has loaded in the page and two animation frames have passed, so
+    the first thing seen is the page's own content — HTML and CSS
+    inline in `index.html` (a launch screen) is on screen by then. A
+    page that never imports `@chain/sdk` waits for the timeout.
+  - `"showCalled"`: the window stays hidden until the page calls
+    `show()` — for an app that waits for its own data or a particular
+    element.
+- **`showTimeout`**: milliseconds (default 3000) after which the window
+  appears anyway, whatever `showWhen` says, so a page that fails to load
+  or never calls `show()` still gets a window. `0` or more; `null` → the
+  default. Ignored with `immediately`.
+
+While hidden:
+
+- The app is launched as usual: Dock icon (or taskbar entry), menu bar,
+  and the window is already the key, focused window at its normal size
+  and position — it just isn't drawn and lets clicks through. Clicking
+  the Dock icon then does nothing (there's still exactly one window).
+- The page runs normally: scripts, timers and animation frames.
+
+When it appears, it's exactly where a normal launch put it: in front
+and focused if the app is still active, behind if the user switched to
+another app meanwhile — showing never takes focus from another app.
+
+- **`show()`** shows the window if it hasn't appeared yet; otherwise it
+  does nothing and resolves. Safe in any mode, any number of times.
+- **`isShown()`**: whether the window has appeared. `true` with
+  `immediately`; once `true` it stays `true` (minimising, full screen
+  and hiding the app don't change it).
+- **`onShown(listener)`** fires once, when it appears. It doesn't fire
+  for a window that's already shown, so check `isShown()` first:
+
+  ```ts
+  if (await desktop.window.isShown()) start();
+  else desktop.window.onShown(start);
+  ```
+
+Only the first appearance counts: reloading the page, or a hot reload
+in `chain dev`, never hides the window again.
 
 ## Dragging the window
 
@@ -179,6 +233,7 @@ Options that don't work are accepted and ignored — never an error.
 | drag regions, `startDrag` | yes | yes | yes |
 | insets | yes | all zero (no chrome over the page) | all zero |
 | full screen | yes | yes | yes |
+| `showWhen` `firstPaint`, `showCalled` | yes | falls back to `immediately` | falls back to `immediately` |
 
 Only macOS is verified; see `research/`.
 
@@ -187,7 +242,7 @@ Only macOS is verified; see `research/`.
 | Code | When |
 | --- | --- |
 | `UNSUPPORTED` | outside a Chain app (`availability()` never rejects) |
-| `INVALID_ARGUMENT` | `setOptions()` with an unknown key or style, malformed colour, or negative/non-finite position |
+| `INVALID_ARGUMENT` | `setOptions()` with an unknown key or style, malformed colour, or negative/non-finite position, or with `showWhen`/`showTimeout` |
 | `NATIVE_FAILURE` | anything else |
 
 ## Non-goals
@@ -198,5 +253,7 @@ Only macOS is verified; see `research/`.
 - Vibrancy/translucent materials behind the page.
 - Drawing replacement window buttons for `hidden` — the app's job.
 - Remembering runtime changes across launches.
+- Hiding the window again after its first appearance — `showWhen`
+  is about launch only.
 - Windows 11 caption-button overlays (`titleBarOverlay`-style) — not
   until a Windows app needs one; `overlay` falls back there.

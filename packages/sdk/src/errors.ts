@@ -12,6 +12,7 @@ export type ChainErrorCode =
   | "CANCELLED"
   | "INTEGRITY_FAILED"
   | "TOO_LARGE"
+  | "TIMEOUT"
   | "HTTP_ERROR"
   | "NATIVE_FAILURE";
 
