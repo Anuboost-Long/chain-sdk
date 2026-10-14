@@ -1,0 +1,16 @@
+{
+  "name": "packages",
+  "description": "Download, verify and unpack archives the app runs from (a VS Code extension's language server), returning their paths; nothing is made executable.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/packages/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "unverified",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

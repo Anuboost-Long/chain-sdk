@@ -5,8 +5,14 @@
 
 export interface ProcessOutputChunk {
   stream: "stdout" | "stderr";
-  /** Decoded as UTF-8, lossily — see CONTRACT.md's Non-goals. */
+  /** UTF-8; a character split across reads is never broken (see CONTRACT.md). */
   data: string;
+}
+
+/** With `output: "bytes"`: exactly the bytes read, undecoded. */
+export interface ProcessByteChunk {
+  stream: "stdout" | "stderr";
+  data: Uint8Array;
 }
 
 /**
@@ -17,6 +23,8 @@ export interface ProcessOutputChunk {
 export type ProcessArg = string | { fileReference: string };
 
 export type ProcessOutputHandler = (chunk: ProcessOutputChunk) => void;
+
+export type ProcessByteHandler = (chunk: ProcessByteChunk) => void;
 
 export interface ProcessExit {
   /** The real exit code, or `null` if the process was killed or exited via a signal with no exit code (see CONTRACT.md). */
@@ -38,6 +46,8 @@ export interface ProcessHandle {
 }
 
 export interface ProcessRunOptions {
+  /** `"bytes"`: `onOutput` gets `Uint8Array` chunks (see CONTRACT.md). Default `"text"`. */
+  output?: "text" | "bytes";
   /** Written to the process's stdin as UTF-8, then stdin is closed (EOF) unless `keepStdinOpen`. Omitted: the process gets no stdin at all (see CONTRACT.md). */
   stdin?: string;
   /** Keep stdin open for `handle.write()` until `handle.closeStdin()`. Default `false`. */
@@ -53,6 +63,14 @@ export interface ProcessRunnerApi {
     command: string,
     args: ProcessArg[],
     onOutput: ProcessOutputHandler,
-    options?: ProcessRunOptions
+    options?: ProcessRunOptions & { output?: "text" }
   ): Promise<ProcessHandle>;
+  run(
+    command: string,
+    args: ProcessArg[],
+    onOutput: ProcessByteHandler,
+    options: ProcessRunOptions & { output: "bytes" }
+  ): Promise<ProcessHandle>;
+  /** Starts a program the app never stops — not at quit, not on a crash (see CONTRACT.md). Resolves once started. */
+  launch(command: string, args: string[]): Promise<void>;
 }

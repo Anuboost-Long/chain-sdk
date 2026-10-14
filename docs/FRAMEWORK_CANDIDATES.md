@@ -164,7 +164,10 @@ Used by:
   plus `12-process-runner-stdin.md` for the one-shot `options.stdin`
   payload)
 - Lazify (request 03 in `lazify-chain/docs/chain-sdk-requests/` — `cwd`,
-  `env`, writing to stdin mid-run, and killing the whole process tree)
+  `env`, writing to stdin mid-run, and killing the whole process tree;
+  request 15 — `launch()`, a program the app never stops, for "Open in
+  editor"; request 16 — `output: "bytes"`, for language servers framing
+  stdout by byte count)
 
 Generalizable:
 Yes — spawning a named executable with an argv array and streaming its
@@ -184,7 +187,8 @@ a real subprocess's output arrival timing matched its own real `sleep`
 calls (proof it streams rather than buffers to exit), stderr captured
 separately from stdout, a real non-zero exit code round-tripped
 correctly, and `kill()` stopped a long-running process well before its
-own timeout
+own timeout. `launch()` verified in a `chain init` app: the launched
+program kept running after `chain dev` killed the app's process group
 
 Windows:
 Not started — see `agent-docs/capabilities/process-runner/research/WINDOWS.md`
@@ -299,6 +303,31 @@ engine transcription of an hour-long lecture)
 
 Windows:
 Engine archive pinned, never built or run there
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Packages
+
+Used by:
+Lazify (request 17 — install VS Code extensions from Open VSX to run the
+language servers they ship)
+
+Generalizable:
+Yes — any app that installs plugins or tools it runs with an interpreter
+the user has (a `.jar`, a Node script) needs streamed, verified,
+cancellable installs with real paths
+
+Contract:
+Draft (`agent-docs/capabilities/packages/CONTRACT.md`,
+`capabilities/packages/contract.ts`)
+
+macOS:
+Implemented and verified end to end against Open VSX (install, resolve,
+cancel of a 177 MB download, integrity failure, remove)
+
+Windows:
+Plain Rust shared with models; never built or run there
 
 Possible package:
 `@chain/sdk` (bundled in core)

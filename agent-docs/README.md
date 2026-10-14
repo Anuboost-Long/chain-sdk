@@ -56,6 +56,7 @@ feature added to this SDK.
 | Vision capability        | [`capabilities/vision/`](capabilities/vision/README.md)                 | `desktop.vision` — on-device text recognition (OCR) for image bytes                                      |
 | Speech capability        | [`capabilities/speech/`](capabilities/speech/README.md)                 | `desktop.speech` — on-device transcription of a stored recording (SpeechAnalyzer via a Swift bridge)     |
 | Models capability        | [`capabilities/models/`](capabilities/models/README.md)                 | `desktop.models` — user-downloaded, SHA-256-verified model packs run by the bundled sherpa-onnx engine   |
+| Packages capability      | [`capabilities/packages/`](capabilities/packages/README.md)             | `desktop.packages` — downloaded, SHA-256-verified archives the app runs from (a VS Code extension's language server), with their paths |
 | Tts capability           | [`capabilities/tts/`](capabilities/tts/README.md)                       | `desktop.tts` — Kokoro/Piper voices via sherpa-onnx; GPL-3.0 opt-in per app (`chain.gpl`)                |
 | AudioRecorder capability | [`capabilities/audio-recorder/`](capabilities/audio-recorder/README.md) | `desktop.audioRecorder` — record the microphone, the computer's own audio, or both mixed, to an AAC file |
 | Browser capability       | [`capabilities/browser/`](capabilities/browser/README.md)               | `desktop.browser` — a separate signed-in browser window: own session, toolbar buttons, read the page, fetch with the session |

@@ -64,6 +64,7 @@ run(
   args: string[],
   onOutput: (chunk: { stream: "stdout" | "stderr"; data: string }) => void,
   options?: {
+    output?: "text" | "bytes"; // "bytes": data is a Uint8Array
     stdin?: string;
     keepStdinOpen?: boolean;
     cwd?: string;
@@ -104,6 +105,11 @@ line) accumulates chunks itself and splits on `\n` — this capability
 doesn't assume the child's output is line-oriented, because assuming
 that would itself be a small amount of AI-CLI-shaped awareness leaking
 into a supposedly generic primitive.
+
+Text is decoded as UTF-8 per stream, carrying a character split between
+two reads over to the next chunk, so concatenating a stream's chunks
+gives exactly the decode of all its bytes. Bytes that aren't valid UTF-8
+become U+FFFD.
 
 `stdout` and `stderr` are each delivered in the order the process
 produced them, but **interleaving between the two streams is not
@@ -151,6 +157,19 @@ Driven by mneme's request 14: `codex exec` takes images only as
   `files.delete()` after `exited` resolves.
 - Plain string elements behave exactly as before; existing callers are
   unchanged.
+
+### `options.output: "bytes"` — every byte, undecoded
+
+With `output: "bytes"`, `onOutput` gets `data` as a `Uint8Array`: exactly
+the bytes read, nothing decoded or replaced. Driven by Lazify's request
+16: a language server over stdio frames each message by a
+`Content-Length` **byte** count, so the caller must count bytes, not
+characters. Also covers a program whose output isn't UTF-8.
+
+- Chunk boundaries carry no meaning, as for text; concatenating a
+  stream's chunks gives exactly its bytes.
+- Everything else about `run()` is unchanged. `"text"` (the default) is
+  the behavior described above.
 
 ### `options.stdin` — a one-shot input payload
 
@@ -244,12 +263,40 @@ out of reach, as it is for a terminal's Ctrl-C.
 Every process still running when the app quits normally is killed with
 its tree (SIGKILL, no grace period). An app killed by a signal (e.g.
 `chain dev` restarting it) gets no chance to do this, so its processes
-outlive it.
+outlive it. A program meant to outlive the app is started with
+`launch()` instead.
+
+## `desktop.processRunner.launch(command, args)`
+
+```
+launch(command: string, args: string[]): Promise<void>
+```
+
+Starts a program that **is not the app's to stop**, then forgets it.
+Driven by Lazify's request 15: "Open in editor" runs a user-set command
+such as `code {folder} -g {file}:{line}` or a JetBrains launcher
+(`.../IntelliJ IDEA.app/Contents/MacOS/idea`), which *is* the IDE. Started
+with `run()`, that IDE would be killed with SIGKILL when the app quits.
+
+- Same rules as `run()` for finding and starting it: `command` resolved on
+  the login-shell `PATH`, `args` a literal argv array, never a shell.
+- Resolves once the program has started, not once it finishes. Nothing
+  comes back: no output, no exit code, no handle.
+- The program outlives the app however the app ends: a normal quit, a
+  crash, or a signal to the app's process group (`chain dev` restarting
+  it). On macOS/Linux it is started in a new session (`setsid`), so it is
+  in no process group the app or `chain dev` signals and has no
+  controlling terminal to hang up. On Windows it is started detached in
+  its own process group (unverified, see `research/WINDOWS.md`).
+- Its stdin, stdout and stderr are the null device, so nothing it does
+  depends on pipes the app holds.
+- The app never waits for it, kills it or keeps a record of it.
 
 ## Errors
 
 - `run()` rejects with `ChainError { code: "INVALID_ARGUMENT" }` if
-  `command` is empty, or `cwd` isn't a folder.
+  `command` is empty, or `cwd` isn't a folder; `launch()` if `command` is
+  empty.
 - `run()` rejects with `ChainError { code: "NOT_GRANTED" }` if `cwd` is
   outside every `desktop.folders` grant, and `NOT_FOUND` if it doesn't
   exist.
@@ -259,17 +306,17 @@ outlive it.
   seconds after it was told to stop.
 - `run()` rejects with `ChainError { code: "NOT_FOUND" }` if an `args`
   element's `fileReference` doesn't resolve to an existing managed file.
-- `run()` rejects with `ChainError { code: "NOT_FOUND" }` if `command`
+- `run()` and `launch()` reject with `ChainError { code: "NOT_FOUND" }` if `command`
   can't be resolved to an executable at all (no such command on `PATH`)
   — mirrors `files`' own `NOT_FOUND` for "the thing you referenced
   doesn't exist," and matches the OS-level `ENOENT` this condition
   actually is.
-- `run()` rejects with `ChainError { code: "PERMISSION_DENIED" }` if the
+- `run()` and `launch()` reject with `ChainError { code: "PERMISSION_DENIED" }` if the
   OS refuses to execute the resolved file (exists, but isn't
   executable/isn't permitted).
 - Any other unexpected native failure to spawn rejects with
   `ChainError { code: "NATIVE_FAILURE" }`.
-- Calling `run()` or `kill()` outside a Chain (Tauri) runtime rejects
+- Calling `run()`, `launch()` or `kill()` outside a Chain (Tauri) runtime rejects
   with `ChainError { code: "UNSUPPORTED" }`, same as every other
   capability.
 - **A non-zero exit code is not an error.** `run()`'s promise resolving
@@ -295,7 +342,7 @@ outlive it.
 - **No AI-CLI awareness whatsoever.** No stdout parsing, no knowledge of
   `stream-json`, session ids, or any specific agent CLI's flags. See
   "The two open design questions" above.
-- **No PTY, no terminal, nothing that outlives the app.** stdin is a
+- **No PTY, no terminal.** stdin is a
   pipe (`keepStdinOpen` plus `write()`), never a TTY. A program that
   needs a real terminal (full-screen TUIs, resize, coloured redraws) is
   the `terminal` capability. No binary (`Uint8Array`) input either, only
@@ -311,10 +358,13 @@ outlive it.
 - **No stream-interleaving ordering guarantee across stdout/stderr.**
   See the "run()" section above — each stream is in-order internally,
   the two streams relative to each other are not.
-- **No binary-safe / arbitrary-encoding output.** `data` is always
-  UTF-8-decoded text (lossily — invalid byte sequences become U+FFFD),
-  never raw bytes. This capability is for text-producing CLIs; a process
-  whose stdout is meaningfully binary is out of scope.
+- **No decoding other than UTF-8.** Text output is UTF-8 (invalid
+  sequences become U+FFFD); anything else is read with
+  `output: "bytes"` and decoded by the caller.
+- **Nothing in between `run()` and `launch()`.** A `run()` process is the
+  app's: watched, killable, stopped at quit. A `launch()` process is not:
+  no output, no handle, no `cwd`/`env`/stdin. Nothing asked for a detached
+  process with output, or a tracked one that survives quit.
 - **No configurable kill signal or timings.** SIGTERM, 2 s, SIGKILL, give
   up at 5 s is fixed. Nothing asked to tune it.
 - **No reach beyond the process group.** Children that deliberately

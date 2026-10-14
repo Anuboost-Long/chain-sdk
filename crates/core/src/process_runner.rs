@@ -27,10 +27,16 @@ pub enum ProcessStream {
     Stderr,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessOutputData {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessOutputChunk {
     pub stream: ProcessStream,
-    pub data: String,
+    pub data: ProcessOutputData,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +76,8 @@ impl ProcessRunnerError {
 
 #[derive(Default)]
 pub struct RunOptions {
+    /// Chunks as the raw bytes read instead of UTF-8 text.
+    pub bytes: bool,
     /// Written to stdin as soon as the process starts.
     pub stdin: Option<String>,
     /// Keep stdin open after `stdin` for `ProcessHandle::write`, until
@@ -206,14 +214,15 @@ pub fn run(
     let pid = child.id();
     let killed = Arc::new(AtomicBool::new(false));
     let on_output = Arc::new(on_output);
+    let bytes = options.bytes;
 
     let stdout_output = Arc::clone(&on_output);
     let stdout_thread =
-        std::thread::spawn(move || read_stream(stdout, ProcessStream::Stdout, &*stdout_output));
+        std::thread::spawn(move || read_stream(stdout, ProcessStream::Stdout, bytes, &*stdout_output));
 
     let stderr_output = Arc::clone(&on_output);
     let stderr_thread =
-        std::thread::spawn(move || read_stream(stderr, ProcessStream::Stderr, &*stderr_output));
+        std::thread::spawn(move || read_stream(stderr, ProcessStream::Stderr, bytes, &*stderr_output));
 
     let wait_killed = Arc::clone(&killed);
     std::thread::spawn(move || {
@@ -230,22 +239,75 @@ pub fn run(
     Ok(ProcessHandle { pid, killed, stdin: Mutex::new(stdin_sender) })
 }
 
+/// Starts `command` so it outlives the app, then forgets it: no output, no
+/// handle, nothing for quit-time cleanup to find. Same PATH and argv rules
+/// as `run`. Returns once it has started.
+pub fn launch(command: &str, args: &[String]) -> Result<(), ProcessRunnerError> {
+    if command.is_empty() {
+        return Err(ProcessRunnerError::InvalidArgument("command must not be empty".to_string()));
+    }
+
+    let mut cmd = Command::new(command);
+    cmd.args(args);
+    #[cfg(unix)]
+    if let Some(path) = login_shell_path() {
+        cmd.env("PATH", path);
+    }
+    process_tree::leave_the_app(&mut cmd);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+
+    let mut child = cmd.spawn().map_err(classify_spawn_error)?;
+    // Reaped if it exits while the app runs; otherwise the OS adopts it.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+/// As text, a character split between two reads is held back until its
+/// last byte arrives, never turned into U+FFFD.
 fn read_stream<R: Read, F: Fn(ProcessOutputChunk) + Send + Sync>(
     mut reader: R,
     stream: ProcessStream,
+    bytes: bool,
     on_output: &F,
 ) {
     let mut buf = [0u8; 8192];
+    let mut pending = Vec::new();
     loop {
         match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                on_output(ProcessOutputChunk { stream, data });
+            Ok(0) | Err(_) => break,
+            Ok(n) if bytes => {
+                on_output(ProcessOutputChunk { stream, data: ProcessOutputData::Bytes(buf[..n].to_vec()) });
             }
-            Err(_) => break,
+            Ok(n) => {
+                pending.extend_from_slice(&buf[..n]);
+                let text = crate::terminal::take_complete_utf8(&mut pending);
+                if !text.is_empty() {
+                    on_output(ProcessOutputChunk { stream, data: ProcessOutputData::Text(text) });
+                }
+            }
         }
     }
+    if !pending.is_empty() {
+        let text = String::from_utf8_lossy(&pending).into_owned();
+        on_output(ProcessOutputChunk { stream, data: ProcessOutputData::Text(text) });
+    }
+}
+
+/// Standard padded base64, for carrying byte chunks over JSON IPC.
+pub fn encode_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for group in bytes.chunks(3) {
+        let n = group.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= group.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// The user's real login-shell `PATH` (nvm/homebrew/asdf dirs included),
@@ -307,6 +369,13 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
+    fn text(chunk: ProcessOutputChunk) -> String {
+        match chunk.data {
+            ProcessOutputData::Text(text) => text,
+            ProcessOutputData::Bytes(_) => panic!("expected text, got bytes"),
+        }
+    }
+
     fn wait_for_exit(rx: mpsc::Receiver<ProcessExit>) -> ProcessExit {
         rx.recv_timeout(Duration::from_secs(5)).expect("process did not exit in time")
     }
@@ -321,7 +390,7 @@ mod tests {
         let chunks = Arc::new(Mutex::new(Vec::<String>::new()));
         let chunks_for_output = Arc::clone(&chunks);
         run("/bin/sh", &["-c".to_string(), script.to_string()], options, move |chunk| {
-            chunks_for_output.lock().unwrap().push(chunk.data);
+            chunks_for_output.lock().unwrap().push(text(chunk));
         }, move |exit| {
             let _ = exit_tx.send(exit);
         })
@@ -358,7 +427,7 @@ mod tests {
         let script = "printf 'Overwrite? (y/N) '; read answer; echo \"got $answer\"; cat; echo done";
         let handle = run("/bin/sh", &["-c".to_string(), script.to_string()], options, move |chunk| {
             let mut all = chunks_for_output.lock().unwrap();
-            all.push_str(&chunk.data);
+            all.push_str(&text(chunk));
             if all.contains("(y/N)") {
                 let _ = prompt_tx.send(());
             }
@@ -389,7 +458,7 @@ mod tests {
         let (pid_tx, pid_rx) = mpsc::channel();
         // A wrapper whose child holds on, like `npm run dev` and its server.
         let handle = run("/bin/sh", &["-c".to_string(), "sleep 30 & echo $!; wait".to_string()], RunOptions::default(), move |chunk| {
-            if let Ok(pid) = chunk.data.trim().parse::<i32>() {
+            if let Ok(pid) = text(chunk).trim().parse::<i32>() {
                 let _ = pid_tx.send(pid);
             }
         }, move |exit| {
@@ -415,7 +484,7 @@ mod tests {
             RunOptions::default(),
             move |chunk| {
                 assert_eq!(chunk.stream, ProcessStream::Stdout);
-                chunks_for_output.lock().unwrap().push(chunk.data);
+                chunks_for_output.lock().unwrap().push(text(chunk));
             },
             move |exit| {
                 let _ = exit_tx.send(exit);
@@ -444,8 +513,8 @@ mod tests {
             &["-c".to_string(), "echo out-message; echo err-message 1>&2".to_string()],
             RunOptions::default(),
             move |chunk| match chunk.stream {
-                ProcessStream::Stdout => stdout_for_output.lock().unwrap().push(chunk.data),
-                ProcessStream::Stderr => stderr_for_output.lock().unwrap().push(chunk.data),
+                ProcessStream::Stdout => stdout_for_output.lock().unwrap().push(text(chunk)),
+                ProcessStream::Stderr => stderr_for_output.lock().unwrap().push(text(chunk)),
             },
             move |exit| {
                 let _ = exit_tx.send(exit);
@@ -530,7 +599,7 @@ mod tests {
 
         // `cat` only exits once it sees EOF, so a clean exit proves stdin was closed.
         run("/bin/cat", &[], stdin("héllo\0world".to_string()), move |chunk| {
-            chunks_for_output.lock().unwrap().push(chunk.data);
+            chunks_for_output.lock().unwrap().push(text(chunk));
         }, move |exit| {
             let _ = exit_tx.send(exit);
         })
@@ -550,7 +619,7 @@ mod tests {
         // `cat` echoes as it reads, so its stdout fills while stdin is still
         // being written — deadlocks if writing blocks reading.
         run("/bin/cat", &[], stdin(payload.clone()), move |chunk| {
-            *received_for_output.lock().unwrap() += chunk.data.len();
+            *received_for_output.lock().unwrap() += text(chunk).len();
         }, move |exit| {
             let _ = exit_tx.send(exit);
         })
@@ -581,7 +650,7 @@ mod tests {
         let chunks_for_output = Arc::clone(&chunks);
 
         run("/bin/cat", &[], RunOptions::default(), move |chunk| {
-            chunks_for_output.lock().unwrap().push(chunk.data);
+            chunks_for_output.lock().unwrap().push(text(chunk));
         }, move |exit| {
             let _ = exit_tx.send(exit);
         })
@@ -589,6 +658,70 @@ mod tests {
 
         assert_eq!(wait_for_exit(exit_rx).code, Some(0));
         assert!(chunks.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_character_split_across_reads_stays_whole() {
+        // "€" is three bytes; the pause makes them arrive in two reads.
+        let output = sh_output(r"printf '\342\202'; sleep 0.1; printf '\254!'", RunOptions::default());
+        assert_eq!(output, "€!");
+    }
+
+    #[test]
+    fn bytes_output_keeps_every_byte() {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let received = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let received_for_output = Arc::clone(&received);
+        let options = RunOptions { bytes: true, ..RunOptions::default() };
+        let script = r"printf '\342\202'; sleep 0.1; printf '\254\377\000'";
+        run("/bin/sh", &["-c".to_string(), script.to_string()], options, move |chunk| match chunk.data {
+            ProcessOutputData::Bytes(bytes) => received_for_output.lock().unwrap().extend(bytes),
+            ProcessOutputData::Text(_) => panic!("expected bytes, got text"),
+        }, move |exit| {
+            let _ = exit_tx.send(exit);
+        })
+        .unwrap();
+
+        assert_eq!(wait_for_exit(exit_rx).code, Some(0));
+        assert_eq!(*received.lock().unwrap(), [0xE2, 0x82, 0xAC, 0xFF, 0x00]);
+    }
+
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(encode_base64(b""), "");
+        assert_eq!(encode_base64(b"h"), "aA==");
+        assert_eq!(encode_base64(b"he"), "aGU=");
+        assert_eq!(encode_base64(b"hello"), "aGVsbG8=");
+        assert_eq!(encode_base64(&[0xE2, 0x82, 0xAC, 0xFF, 0x00]), "4oKs/wA=");
+    }
+
+    #[test]
+    fn launch_starts_the_program_outside_the_app_session() {
+        let pid_file = std::env::temp_dir().join(format!("chain-launch-{}", std::process::id()));
+        let script = format!("echo $$ > {}; sleep 30", pid_file.display());
+        launch("/bin/sh", &["-c".to_string(), script]).unwrap();
+
+        let started = Instant::now();
+        let pid = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file).ok().and_then(|text| text.trim().parse::<i32>().ok()) {
+                break pid;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5), "the launched program never started");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let _ = std::fs::remove_file(&pid_file);
+
+        let (session, group) = unsafe { (libc::getsid(pid), libc::getpgid(pid)) };
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        assert_eq!(session, pid, "not the leader of its own session");
+        assert_eq!(group, pid, "not the leader of its own process group");
+        assert_ne!(session, unsafe { libc::getsid(0) });
+    }
+
+    #[test]
+    fn launch_rejects_an_empty_or_nonexistent_command() {
+        assert!(matches!(launch("", &[]), Err(ProcessRunnerError::InvalidArgument(_))));
+        assert!(matches!(launch("chain-sdk-definitely-not-a-real-command", &[]), Err(ProcessRunnerError::NotFound(_))));
     }
 
     #[test]

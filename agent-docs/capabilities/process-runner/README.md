@@ -123,6 +123,27 @@ const scaffold = await desktop.processRunner.run("npx", ["create-vite", "app"], 
 }, { cwd: project.path, keepStdinOpen: true });
 ```
 
+A program that frames its output by byte count (a language server over
+stdio: `Content-Length` headers) reads it as raw bytes instead of text:
+
+```ts
+const server = await desktop.processRunner.run("tailwindcss-language-server", ["--stdio"], (chunk) => {
+  // chunk.data is a Uint8Array: exactly the bytes read, nothing decoded
+}, { output: "bytes", keepStdinOpen: true });
+```
+
+Text output never breaks a character split across two reads, so joining
+a stream's chunks always gives the same text as decoding all of it.
+
+A program the app should never stop — the user's editor, opened from an
+"Open in editor" action — is started with `launch()` instead. It resolves
+once the program has started and outlives the app however it ends
+(quit, crash, `chain dev` restart). No output, no handle:
+
+```ts
+await desktop.processRunner.launch("code", [folder, "-g", `${file}:${line}`]);
+```
+
 A nonexistent command rejects instead of resolving:
 
 ```ts
@@ -144,15 +165,16 @@ wiring needed per app.
   awareness, no compiled-in executable allowlist — that's Phase 28's
   job), `options.stdin` (one-shot payload, EPIPE isn't an error) and
   `cwd`/`env`, `keepStdinOpen`/`write()`, the tree-killing `kill()`, and
-  the Non-goals (no shell interpretation ever, no PTY, no
-  line-buffering, no stream-interleaving guarantee). Check this before
+  `output: "bytes"`, and the Non-goals (no shell interpretation ever,
+  no PTY, no line-buffering, no stream-interleaving guarantee). Check this before
   changing behavior.
 - `crates/core/src/process_tree.rs` — process groups, the SIGTERM →
   SIGKILL → give-up escalation, and Windows' `taskkill /T`. Shared with
-  `terminal`.
+  `terminal`. `leave_the_app` is the opposite, for `launch()`: a new
+  session (`setsid`) on Unix, a detached process on Windows.
 - `capabilities/process-runner/contract.ts` — the exact types
-  (`ProcessRunnerApi`, `ProcessRunOptions`, `ProcessHandle`,
-  `ProcessOutputChunk`, `ProcessExit`); change this and every implementation below together,
+  (`ProcessRunnerApi` with its two `run` overloads, `ProcessRunOptions`,
+  `ProcessHandle`, `ProcessOutputChunk`/`ProcessByteChunk`, `ProcessExit`); change this and every implementation below together,
   never one without the others.
 - `agent-docs/capabilities/process-runner/AGENTS.md` — what's already
   decided and why (especially the client-side-id race-avoidance
@@ -165,7 +187,7 @@ wiring needed per app.
   the way `cmd.exe` does. Three candidate fixes are documented, none
   chosen yet — read before touching the spawn path on Windows.
 - `crates/core/src/process_runner.rs` — the actual Rust implementation
-  (`run()`, `ProcessHandle`, `ProcessExit`, `ProcessRunnerError`). Has
+  (`run()`, `launch()`, `ProcessHandle`, `ProcessExit`, `ProcessRunnerError`). Has
   real unit tests (`cargo test -p chain-core`) including a genuine
   timing-based proof that output arrives incrementally, not buffered to
   exit — extend tests here rather than only through the Tauri layer.
@@ -175,7 +197,8 @@ wiring needed per app.
   native `process_runner_run` command — see its comments for why getting
   this ordering backwards would silently lose fast processes' output.
 - `packages/cli/templates/lib.rs` — the Tauri command/event layer
-  (`process_runner_run`/`process_runner_kill`, `ProcessRunnerState`)
+  (`process_runner_run`/`process_runner_kill`, `ProcessRunnerState`;
+  `process_runner_launch` deliberately stays out of that state)
   that every scaffolded app gets. This is the file `chain update`
   propagates — see `agent-docs/framework/command/README.md`.
 - `apps/playground/src-tauri/src/lib.rs` — same wiring, kept in sync by

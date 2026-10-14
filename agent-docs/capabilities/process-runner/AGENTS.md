@@ -253,6 +253,38 @@ capability works there at all against an npm-installed CLI.
 - Not verified: kill-on-quit (`RunEvent::Exit`) in a real quit, and the
   `TIMEOUT` path through IPC (unit-tested only via the grace period).
 
+### `launch()` (Lazify request 15) — verified on macOS, 14 October 2026
+
+- Unit tests: `launch_starts_the_program_outside_the_app_session` (the
+  launched pid leads its own session and process group, not the test's),
+  `launch_rejects_an_empty_or_nonexistent_command`.
+- End to end in a throwaway `chain init` app under `chain dev`, through
+  IPC (`process_runner_launch`): `sleep 6017` started in its own process
+  group with no terminal; `no-such-editor-xyz` rejected
+  `NOT_FOUND: No such file or directory`. Then `chain dev` was stopped
+  with SIGTERM, which kills the app's whole process group (the
+  `chain dev` restart path): the app was gone and `sleep` was still
+  running, re-parented to launchd (PPID 1).
+- Not verified live: a normal Cmd-Q (the launched process isn't in
+  `ProcessRunnerState`, so quit-time cleanup can't see it) and Windows.
+
+### `output: "bytes"` and split-safe text (Lazify request 16) — verified on macOS, 14 October 2026
+
+- Bytes cross IPC as base64 in the `chain://process-output` event
+  (`bytes` field instead of `data`); the SDK decodes them to a
+  `Uint8Array`. Text is decoded with terminal's `take_complete_utf8`,
+  which holds back an incomplete trailing character until the next read.
+  Before this, each read was decoded on its own and a split character
+  became two U+FFFD — which also affected mneme's stream-json chat.
+- Unit tests: `a_character_split_across_reads_stays_whole`,
+  `bytes_output_keeps_every_byte`, `encodes_base64`.
+- End to end in a throwaway `chain init` app under `chain dev`, through
+  the SDK: a script printing `€` in two writes 100 ms apart, then `0xFF
+  0x00`, then 300,000 bytes of `“x”`. Bytes mode: 39 `Uint8Array`
+  chunks, exactly 300,005 bytes, starting `e2 82 ac ff 00`. Text mode:
+  `€` whole, exactly one U+FFFD (for the `0xFF`), none in the 300 KB.
+- Not verified: Windows.
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Decide between the Windows spawn approaches in
@@ -288,6 +320,10 @@ capability works there at all against an npm-installed CLI.
 - [ ] Verify kill-on-quit with a real Cmd-Q, and decide whether an app
       killed by a signal (`chain dev` restarts) should clean up too — it
       would need a signal handler in the app.
+- [ ] Windows `launch()`: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,
+      never compiled or run on Windows. `chain dev`'s `taskkill /T` walks
+      parent-pid links, so it may still reach a launched program; see
+      `research/WINDOWS.md`.
 - [ ] Propagate request 03 to Lazify: the Lazify session runs
       `chain update` itself (it asked to), after being told what changed.
 
@@ -299,6 +335,8 @@ capability works there at all against an npm-installed CLI.
 - Never add a compiled-in executable allowlist, permission prompt, or
   trust/confirmation logic — that's Phase 28's job, a separate
   capability. See `CONTRACT.md`'s "two open design questions."
+- Text output must never break a character split across reads: decode
+  through `take_complete_utf8`, never `from_utf8_lossy` per read.
 - Never add stdout/stderr parsing, line-buffering, or any assumption
   about output structure (JSON, line-oriented, etc.) — see "Chunks are
   NOT line-buffered" above. If a real need for line-buffered delivery
@@ -308,5 +346,9 @@ capability works there at all against an npm-installed CLI.
   `terminal` capability. Interactive input stays a pipe, opt-in through
   `keepStdinOpen`; without it, `options.stdin` is write-once-then-close
   and must stay that way.
-- Never spawn without `process_tree::lead_own_group` — `kill()`'s tree
+- Never spawn from `run()` without `process_tree::lead_own_group` — `kill()`'s tree
   guarantee depends on the process leading its own group.
+- Never track a `launch()` process, or put it in a job object the app
+  owns: it must stay out of every quit-time and tree-wide cleanup. A
+  future `KILL_ON_JOB_CLOSE` job for `run()` on Windows needs `launch()`
+  to break away from it.

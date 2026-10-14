@@ -17,6 +17,7 @@ pub mod keep_awake;
 pub mod m4a;
 mod microphone_processor;
 pub mod models;
+pub mod packages;
 pub mod page_zoom;
 pub mod pdf;
 pub mod platform;

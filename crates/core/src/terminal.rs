@@ -320,7 +320,7 @@ fn read_output(mut reader: Box<dyn Read + Send>, events: mpsc::Sender<Event>) {
 
 /// Everything in `pending` that decodes, invalid sequences as U+FFFD,
 /// leaving only an incomplete final character behind.
-fn take_complete_utf8(pending: &mut Vec<u8>) -> String {
+pub(crate) fn take_complete_utf8(pending: &mut Vec<u8>) -> String {
     let mut text = String::new();
     loop {
         match std::str::from_utf8(pending) {

@@ -24,6 +24,27 @@ pub fn lead_own_group(command: &mut std::process::Command) {
     let _ = command;
 }
 
+/// Puts the spawned process beyond anything that stops the app: on Unix a
+/// new session, so no signal to the app's process group reaches it and no
+/// terminal hangs it up; on Windows a detached process in its own group.
+pub fn leave_the_app(command: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // setsid is async-signal-safe, as pre_exec requires.
+        unsafe {
+            command.pre_exec(|| if libc::setsid() == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
 /// Stops `pid`'s whole tree: SIGTERM to its group, SIGKILL after `grace`,
 /// then waits until every member is gone. `Err` if some are still alive at
 /// `limit`. Stopping a tree that is already gone succeeds.

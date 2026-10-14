@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   ProcessArg,
+  ProcessByteHandler,
   ProcessExit,
   ProcessHandle,
   ProcessOutputHandler,
@@ -46,7 +47,9 @@ function toChainError(error: unknown, fallback: string) {
 interface ProcessOutputEvent {
   id: string;
   stream: "stdout" | "stderr";
-  data: string;
+  data?: string;
+  /** Base64, with `output: "bytes"`. */
+  bytes?: string;
 }
 
 interface ProcessExitEvent {
@@ -56,7 +59,7 @@ interface ProcessExitEvent {
 }
 
 interface PendingProcess {
-  onOutput: ProcessOutputHandler;
+  onOutput: ProcessOutputHandler | ProcessByteHandler;
   resolveExit: (exit: ProcessExit) => void;
 }
 
@@ -71,7 +74,11 @@ async function ensureListeners(): Promise<void> {
   if (!listenersReady) {
     listenersReady = Promise.all([
       listen<ProcessOutputEvent>("chain://process-output", (event) => {
-        pending.get(event.payload.id)?.onOutput({ stream: event.payload.stream, data: event.payload.data });
+        const { id, stream, data, bytes } = event.payload;
+        const onOutput = pending.get(id)?.onOutput;
+        if (!onOutput) return;
+        if (bytes === undefined) (onOutput as ProcessOutputHandler)({ stream, data: data ?? "" });
+        else (onOutput as ProcessByteHandler)({ stream, data: decodeBase64(bytes) });
       }),
       listen<ProcessExitEvent>("chain://process-exit", (event) => {
         const entry = pending.get(event.payload.id);
@@ -82,6 +89,13 @@ async function ensureListeners(): Promise<void> {
     ]).then(() => undefined);
   }
   return listenersReady;
+}
+
+function decodeBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function generateProcessId(): string {
@@ -95,7 +109,7 @@ export const processRunner: ProcessRunnerApi = {
   async run(
     command: string,
     args: ProcessArg[],
-    onOutput: ProcessOutputHandler,
+    onOutput: ProcessOutputHandler | ProcessByteHandler,
     options?: ProcessRunOptions
   ): Promise<ProcessHandle> {
     requireTauri("run");
@@ -125,7 +139,8 @@ export const processRunner: ProcessRunnerApi = {
         stdin: options?.stdin,
         keepStdinOpen: options?.keepStdinOpen,
         cwd: options?.cwd,
-        env: options?.env
+        env: options?.env,
+        bytes: options?.output === "bytes"
       });
     } catch (error) {
       pending.delete(id);
@@ -156,5 +171,14 @@ export const processRunner: ProcessRunnerApi = {
       },
       exited
     };
+  },
+
+  async launch(command: string, args: string[]): Promise<void> {
+    requireTauri("launch");
+    try {
+      await invoke<void>("process_runner_launch", { command, args });
+    } catch (error) {
+      throw toChainError(error, "processRunner.launch() failed");
+    }
   }
 };

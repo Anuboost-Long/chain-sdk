@@ -545,7 +545,11 @@ struct ProcessRunnerState {
 struct ProcessOutputPayload {
     id: String,
     stream: &'static str,
-    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    /// Base64, with `output: "bytes"` — JSON can't carry raw bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -602,6 +606,7 @@ fn process_runner_run(
     keep_stdin_open: Option<bool>,
     cwd: Option<String>,
     env: Option<HashMap<String, String>>,
+    bytes: Option<bool>,
 ) -> Result<(), String> {
     // Must be an existing folder inside a grant — see folders/CONTRACT.md.
     let cwd = match cwd {
@@ -630,6 +635,7 @@ fn process_runner_run(
         &command,
         &args,
         chain_core::process_runner::RunOptions {
+            bytes: bytes.unwrap_or(false),
             stdin,
             keep_stdin_open: keep_stdin_open.unwrap_or(false),
             cwd,
@@ -640,9 +646,15 @@ fn process_runner_run(
                 chain_core::process_runner::ProcessStream::Stdout => "stdout",
                 chain_core::process_runner::ProcessStream::Stderr => "stderr",
             };
+            let (data, bytes) = match chunk.data {
+                chain_core::process_runner::ProcessOutputData::Text(text) => (Some(text), None),
+                chain_core::process_runner::ProcessOutputData::Bytes(bytes) => {
+                    (None, Some(chain_core::process_runner::encode_base64(&bytes)))
+                }
+            };
             let _ = app_for_output.emit(
                 "chain://process-output",
-                ProcessOutputPayload { id: id_for_output.clone(), stream, data: chunk.data },
+                ProcessOutputPayload { id: id_for_output.clone(), stream, data, bytes },
             );
         },
         move |exit| {
@@ -690,6 +702,13 @@ fn process_runner_close_stdin(state: tauri::State<ProcessRunnerState>, id: Strin
     if let Some(handle) = running_process(&state, &id) {
         handle.close_stdin();
     }
+}
+
+// Not tracked in ProcessRunnerState: a launched program is never the app's
+// to stop, so quit-time cleanup must not find it.
+#[tauri::command]
+fn process_runner_launch(command: String, args: Vec<String>) -> Result<(), String> {
+    chain_core::process_runner::launch(&command, &args).map_err(to_process_runner_command_error)
 }
 
 // Bridges the ports capability contract (capabilities/ports in chain-sdk):
@@ -839,6 +858,86 @@ async fn models_remove(
     state.installs.cancel(&id);
     let models = models_of(&app, &state)?;
     tauri::async_runtime::spawn_blocking(move || models.remove(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+// Bridges the packages capability contract (capabilities/packages in
+// chain-sdk): archives the app runs from, in a `packages/` sibling of
+// `models/`. Same store and errors as models, but paths go to JS.
+#[derive(Default)]
+struct PackagesState {
+    packages: Mutex<Option<chain_core::packages::Packages>>,
+    installs: chain_core::packages::Installs,
+}
+
+fn packages_of(app: &tauri::AppHandle, state: &PackagesState) -> Result<chain_core::packages::Packages, String> {
+    let mut guard = state.packages.lock().expect("packages mutex poisoned");
+    if guard.is_none() {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        *guard = Some(chain_core::packages::Packages::open(&dir.join("packages")).map_err(to_models_command_error)?);
+    }
+    Ok(guard.clone().expect("just initialized above"))
+}
+
+#[tauri::command]
+async fn packages_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+    manifest: chain_core::packages::PackageManifest,
+) -> Result<chain_core::packages::InstalledPackage, String> {
+    let packages = packages_of(&app, &state)?;
+    let ticket = state.installs.begin(&manifest.id).map_err(to_models_command_error)?;
+    let id = manifest.id.clone();
+    let download = packages
+        .download(&manifest, &ticket, |received, total| {
+            let _ = app.emit("chain://packages-progress", ModelsProgressPayload { id: id.clone(), received, total });
+        })
+        .await
+        .map_err(to_models_command_error)?;
+    tauri::async_runtime::spawn_blocking(move || packages.install(download, &ticket))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+fn packages_resolve(
+    app: tauri::AppHandle,
+    state: tauri::State<PackagesState>,
+    id: String,
+    file: String,
+) -> Result<String, String> {
+    packages_of(&app, &state)?.resolve(&id, &file).map_err(to_models_command_error)
+}
+
+#[tauri::command]
+fn packages_cancel(state: tauri::State<PackagesState>, id: String) {
+    state.installs.cancel(&id);
+}
+
+#[tauri::command]
+async fn packages_list(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+) -> Result<Vec<chain_core::packages::InstalledPackage>, String> {
+    let packages = packages_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || packages.list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+async fn packages_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+    id: String,
+) -> Result<(), String> {
+    state.installs.cancel(&id);
+    let packages = packages_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || packages.remove(&id))
         .await
         .map_err(|e| e.to_string())?
         .map_err(to_models_command_error)
@@ -1371,6 +1470,7 @@ pub fn run() {
         .manage(AgentServerState::default())
         .manage(ProcessRunnerState::default())
         .manage(ModelsState::default())
+        .manage(PackagesState::default())
         .manage(browser::BrowserState::default())
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
         .manage(window::WindowState::default())
@@ -1437,6 +1537,7 @@ pub fn run() {
             process_runner_kill,
             process_runner_write,
             process_runner_close_stdin,
+            process_runner_launch,
             ports_is_free,
             attention::attention_is_focused,
             attention::attention_request,
@@ -1464,6 +1565,11 @@ pub fn run() {
             models_cancel,
             models_list,
             models_remove,
+            packages_install,
+            packages_resolve,
+            packages_cancel,
+            packages_list,
+            packages_remove,
             tts_voices,
             tts_synthesize,
             tts_compile,

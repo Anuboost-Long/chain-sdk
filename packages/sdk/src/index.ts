@@ -8,6 +8,7 @@ import { folders } from "./folders";
 import { http } from "./http";
 import { keepAwake } from "./keep-awake";
 import { models } from "./models";
+import { packages } from "./packages";
 import { pageZoom } from "./page-zoom";
 import { pdf } from "./pdf";
 import { platform } from "./platform";
@@ -41,6 +42,7 @@ export const desktop = {
   vision,
   speech,
   models,
+  packages,
   tts,
   audioRecorder,
   browser,
@@ -119,6 +121,8 @@ export type {
   ProcessRunnerApi,
   ProcessArg,
   ProcessHandle,
+  ProcessByteChunk,
+  ProcessByteHandler,
   ProcessOutputChunk,
   ProcessOutputHandler,
   ProcessRunOptions,
@@ -162,6 +166,12 @@ export type {
   InstalledModel,
   ModelInstallProgress
 } from "./contracts/models";
+export type {
+  PackagesApi,
+  PackageManifest,
+  InstalledPackage,
+  PackageInstallProgress
+} from "./contracts/packages";
 export type {
   TtsApi,
   TtsModelConfig,

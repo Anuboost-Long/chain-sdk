@@ -182,3 +182,31 @@ file's absolute path as exactly one argv element.
 - The path is passed through `Command::args` like every other element —
   no shell, no quoting, spaces in `~/Library/Application Support/...`
   are fine.
+
+## Launching a program that outlives the app (request 15)
+
+`launch()` starts a program with `setsid()` in `pre_exec`, so it leads a
+new session and process group. That puts it out of reach of everything
+that stops the app on macOS:
+
+- Quit-time cleanup only kills `run()` processes it tracks; `launch()`
+  isn't tracked.
+- `chain dev` (restart or Ctrl-C) signals the app's process group with
+  `kill(-pid)`; a new session is a different group.
+- A terminal closing sends SIGHUP to its foreground group; a new session
+  has no controlling terminal.
+- An app crash kills nothing on its own: children are re-parented to
+  launchd. The waiter thread that reaps it dies with the app, which is
+  fine, since launchd then reaps it.
+
+stdin/stdout/stderr are `/dev/null`, not pipes, so the program never
+gets SIGPIPE or EOF surprises when the app's ends close.
+
+`pre_exec` makes Rust use `fork`+`exec` instead of `posix_spawn`; spawn
+errors (ENOENT, EACCES) still come back through `spawn()`, so `NOT_FOUND`
+works as for `run()`. Verified 14 October 2026, see AGENTS.md.
+
+TCC note, not verified: macOS attributes a child's privacy prompts to
+the "responsible" app, so an IDE launched this way may show Lazify's name
+in a permission prompt. Electron's `spawn({ detached: true })` has the
+same behavior.

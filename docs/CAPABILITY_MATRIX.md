@@ -22,6 +22,7 @@ to see what actually exists vs. what's just planned.
 | Vision          | 🧪    | ⚠       | ⏳    | Draft    |
 | Speech          | 🧪    | ⏳      | ⏳    | Draft    |
 | Models          | 🧪    | ⏳      | ⏳    | Draft    |
+| Packages        | 🧪    | ⏳      | ⏳    | Draft    |
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
@@ -192,6 +193,13 @@ plus `speech.transcribe`'s `engine` option on a bundled, GPL-free
 sherpa-onnx) is verified on macOS end to end in `apps/playground`,
 including an hour-long transcription with Moonshine tiny-en. The Windows
 archive is pinned but has never been built there.
+
+`packages` (Lazify request 17 — `desktop.packages` install/resolve/
+cancel/list/remove) reuses the models store for archives the app runs
+from, returning their paths. Verified on macOS in a `chain init` app
+against Open VSX: Tailwind CSS IntelliSense installed with progress,
+SonarLint cancelled mid-download, integrity failure, nothing left behind.
+Never run on Windows (plain Rust, nothing per-OS).
 
 `tts` (request 21 part 2 — `voices`/`synthesize` with Kokoro/Piper, plus
 `compile` for audiobook mode: one AAC file with per-segment timings) is
