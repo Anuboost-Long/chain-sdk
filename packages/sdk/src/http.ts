@@ -106,7 +106,8 @@ async function fetchResponse<T>(method: string, config: HttpRequestConfig): Prom
     params: serializeParams(config.params),
     body: encodeBody(config.data),
     timeoutMs: config.timeout,
-    maxBytes
+    maxBytes,
+    trustLoopbackCertificates: config.trustLoopbackCertificates
   };
   try {
     if (config.responseType === "bytes") {

@@ -110,13 +110,73 @@ impl ShowWhen {
 }
 
 /// package.json's keys that only apply at startup, so setOptions() refuses them.
-const STARTUP_KEYS: [&str; 2] = ["showWhen", "showTimeout"];
+const STARTUP_KEYS: [&str; 6] = ["showWhen", "showTimeout", "size", "minSize", "title", "tabFocus"];
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StartupKeys {
     show_when: Option<ShowWhen>,
     show_timeout: Option<f64>,
+    size: Option<Size>,
+    min_size: Option<Size>,
+    title: Option<String>,
+    tab_focus: Option<TabFocus>,
+}
+
+fn startup_keys(text: &str) -> Result<StartupKeys, InvalidOptions> {
+    let Some(window) = package_window_options(text)? else { return Ok(StartupKeys::default()) };
+    serde_json::from_value(window).map_err(|e| in_package(InvalidOptions(e.to_string())))
+}
+
+/// `WindowSize` in contract.ts: logical pixels, the page's area.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// `TabFocus` in contract.ts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabFocus {
+    All,
+    #[default]
+    System,
+}
+
+/// How the window opens: `size`, `minSize`, `title` and `tabFocus` from
+/// package.json. None = the native project's own.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Launch {
+    pub size: Option<Size>,
+    pub min_size: Option<Size>,
+    pub title: Option<String>,
+    pub tab_focus: TabFocus,
+}
+
+impl Launch {
+    pub fn from_package_json(text: &str) -> Result<Self, InvalidOptions> {
+        let keys = startup_keys(text)?;
+        for (name, size) in [("size", keys.size), ("minSize", keys.min_size)] {
+            let Some(size) = size else { continue };
+            if !(size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0) {
+                return Err(in_package(InvalidOptions(format!(
+                    "{name} must have a positive width and height in pixels, got {}×{}",
+                    size.width, size.height
+                ))));
+            }
+        }
+        if let (Some(size), Some(min)) = (keys.size, keys.min_size) {
+            if size.width < min.width || size.height < min.height {
+                return Err(in_package(InvalidOptions(format!(
+                    "size {}×{} is smaller than minSize {}×{}",
+                    size.width, size.height, min.width, min.height
+                ))));
+            }
+        }
+        Ok(Self { size: keys.size, min_size: keys.min_size, title: keys.title, tab_focus: keys.tab_focus.unwrap_or_default() })
+    }
 }
 
 /// When the window first appears: `showWhen` and `showTimeout` from package.json.
@@ -135,8 +195,7 @@ impl Default for FirstShow {
 impl FirstShow {
     pub fn from_package_json(text: &str) -> Result<Self, InvalidOptions> {
         let mut first_show = Self::default();
-        let Some(window) = package_window_options(text)? else { return Ok(first_show) };
-        let keys: StartupKeys = serde_json::from_value(window).map_err(|e| in_package(InvalidOptions(e.to_string())))?;
+        let keys = startup_keys(text)?;
         if let Some(when) = keys.show_when {
             first_show.when = when;
         }
@@ -458,7 +517,7 @@ pub fn availability() -> Availability {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{apply, insets, page_draws_background, set_drag_regions, set_undrawn, title_bar_double_click};
+pub use macos::{apply, insets, page_draws_background, set_drag_regions, set_tab_focuses_all, set_undrawn, title_bar_double_click};
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -582,6 +641,23 @@ mod macos {
         let Some(webview) = (unsafe { Retained::retain(webview.cast::<AnyObject>()) }) else { return };
         let value = NSNumber::new_bool(draws);
         let _: () = unsafe { msg_send![&*webview, setValue: &*value, forKey: ns_string!("drawsBackground")] };
+    }
+
+    /// Whether Tab moves focus to every focusable element in the page, not
+    /// just what macOS's Keyboard navigation setting allows. It's WebKit's
+    /// `tabFocusesLinks`, which takes buttons and other controls along with
+    /// links (WebCore's `EventHandler::tabsToAllFormControls`). Kept across
+    /// reloads. Main thread, from `with_webview`.
+    pub fn set_tab_focuses_all(webview: *mut std::ffi::c_void, all: bool) {
+        // SAFETY: Tauri's PlatformWebview::inner(), the WKWebView, valid
+        // for the with_webview callback this runs in. The configuration is
+        // a copy, but its preferences are the webview's own.
+        let Some(webview) = (unsafe { Retained::retain(webview.cast::<AnyObject>()) }) else { return };
+        unsafe {
+            let configuration: Retained<AnyObject> = msg_send![&*webview, configuration];
+            let preferences: Retained<AnyObject> = msg_send![&*configuration, preferences];
+            let _: () = msg_send![&*preferences, setTabFocusesLinks: all];
+        }
     }
 
     extern "C" {
@@ -741,6 +817,48 @@ mod tests {
         assert!(error.0.contains("showWhen") && error.0.contains("package.json"), "{}", error.0);
         assert!(chrome.merge(json!({ "showTimeout": 10 })).is_err());
         assert_eq!(chrome, Chrome::default());
+    }
+
+    #[test]
+    fn launch_reads_its_keys_and_leaves_the_rest_alone() {
+        let package = r#"{ "chain": { "window": { "titleBarStyle": "overlay", "showWhen": "firstPaint",
+            "size": { "width": 1440, "height": 920 }, "minSize": { "width": 1180, "height": 760 },
+            "title": "Lazify", "tabFocus": "all" } } }"#;
+        let launch = Launch::from_package_json(package).unwrap();
+        assert_eq!(launch.size, Some(Size { width: 1440.0, height: 920.0 }));
+        assert_eq!(launch.min_size, Some(Size { width: 1180.0, height: 760.0 }));
+        assert_eq!(launch.title.as_deref(), Some("Lazify"));
+        assert_eq!(launch.tab_focus, TabFocus::All);
+        assert_eq!(Chrome::from_package_json(package).unwrap().style, TitleBarStyle::Overlay);
+        assert_eq!(FirstShow::from_package_json(package).unwrap().when, ShowWhen::FirstPaint);
+        assert_eq!(Launch::from_package_json(r#"{ "name": "app" }"#).unwrap(), Launch::default());
+        let nulls = r#"{ "chain": { "window": { "size": null, "minSize": null, "title": null, "tabFocus": null } } }"#;
+        assert_eq!(Launch::from_package_json(nulls).unwrap(), Launch::default());
+    }
+
+    #[test]
+    fn invalid_launch_options_name_the_key() {
+        for (package, key) in [
+            (r#"{ "chain": { "window": { "size": { "width": 0, "height": 600 } } } }"#, "size"),
+            (r#"{ "chain": { "window": { "minSize": { "width": 800, "height": -1 } } } }"#, "minSize"),
+            (r#"{ "chain": { "window": { "size": { "width": 800 } } } }"#, "height"),
+            (r#"{ "chain": { "window": { "size": { "width": 800, "height": 600, "x": 0 } } } }"#, "x"),
+            (r#"{ "chain": { "window": { "size": { "width": 800, "height": 600 }, "minSize": { "width": 900, "height": 600 } } } }"#, "minSize"),
+            (r#"{ "chain": { "window": { "tabFocus": "links" } } }"#, "links"),
+            (r#"{ "chain": { "window": { "title": 3 } } }"#, "3"),
+        ] {
+            let error = Launch::from_package_json(package).unwrap_err();
+            assert!(error.0.starts_with("package.json \"chain.window\": ") && error.0.contains(key), "{}", error.0);
+        }
+    }
+
+    #[test]
+    fn set_options_refuses_launch_keys() {
+        let mut chrome = Chrome::default();
+        for key in ["size", "minSize", "title", "tabFocus"] {
+            let error = chrome.merge(json!({ key: null })).unwrap_err();
+            assert!(error.0.contains(key) && error.0.contains("package.json"), "{}", error.0);
+        }
     }
 
     #[test]

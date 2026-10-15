@@ -6,7 +6,9 @@ page-declared drag regions, title bar insets and full-screen state.
 Requested by mneme (request 38,
 `docs/chain-sdk-requests/38-window-title-bar.md` in the mneme repo);
 when the window first shows by request 40
-(`40-show-window-when-ready.md`).
+(`40-show-window-when-ready.md`). Opening size, minimum size and title,
+and `tabFocus`, by lazify (requests 11 and 12,
+`docs/chain-sdk-requests/` in the lazify-chain repo).
 
 ## What's already decided
 
@@ -37,7 +39,16 @@ when the window first shows by request 40
 - `showWhen`/`showTimeout` are startup-only; `setOptions()` refuses
   them. Only the first appearance: `awaiting` is cleared once and
   reloads never set it again.
-- Don't grow this into window size/position management, toolbars with
+- **`size`/`title` go into Tauri's config** (`configure`, before
+  `.build`), so the window is created that way and centred — no resize
+  after the fact. **`minSize` is set in setup**, after the chrome:
+  through the config, macOS measured it against the bar the window had
+  before Chain's chrome (600 asked → 568 content minimum, verified).
+- **`tabFocus: "all"` is WKPreferences `tabFocusesLinks`** on the live
+  webview's preferences (the configuration getter copies, but its
+  preferences object is the webview's own — read back `true`). WebCore
+  counts tabs-to-links as tabs-to-all-controls on macOS.
+- Don't grow this into runtime window size/position management, toolbars with
   items, vibrancy, or drawn replacement buttons (CONTRACT.md non-goals).
 
 ## Status
@@ -87,7 +98,30 @@ when the window first shows by request 40
       update conflicted on `Cargo.toml`: the template pins `chain-core`
       to a git rev older than this change, so mneme keeps its local path.
 
+- [x] `size`/`minSize`/`title`/`tabFocus` (lazify requests 11, 12),
+      macOS 27.0, `apps/playground` debug build with a temporary
+      native probe (reverted), 10 October 2026:
+      - 1100×720 asked → page `innerWidth` 1100, inner size 1100×721
+        (the extra point is Tauri's measure; not chased), centred
+        (x = (1512 − 1100) / 2).
+      - title "Chain Playground" read back.
+      - `minSize` 900×600, standard bar → `contentMinSize` 900×600.
+      - `tabFocusesLinks` read back `true` with Keyboard navigation off
+        (`AppleKeyboardUIMode` unset).
+      - Unit tests: keys, nulls, invalid values, `setOptions` refusal.
+- [x] Same keys in lazify-chain after `chain update`, macOS 27,
+      10 October 2026 (verified by lazify and its owner): size
+      1440×888 → page 1440×889, window named "Lazify" by the window
+      server, a hand drag stopped at `minSize` 1180×728 (standard bar),
+      and with Keyboard navigation off a real Tab press on Home walked
+      the sidebar buttons.
+
 ## Not done yet
+
+- [ ] `minSize` with `overlay` + `titleBarSize: large`: `contentMinSize`
+      reads 620 for 600 asked (the toolbar's 20 extra points) — drag
+      the window by hand to see what the page actually gets.
+- [ ] `size` larger than the screen (AppKit should shorten it; not tried).
 
 - [ ] `showWhen`: a person watching a real launch for a white frame
       (mneme, dark theme); Dock click while waiting; switching to

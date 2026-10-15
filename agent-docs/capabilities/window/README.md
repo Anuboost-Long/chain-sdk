@@ -5,7 +5,8 @@
 The app window's chrome, set in the app's `package.json` for the first
 frame and changeable at runtime. Requested by mneme (request 38) after
 macOS 27 drew the default title bar as a solid strip over its own nav
-bar; request 40 added when the window first shows.
+bar; request 40 added when the window first shows. Lazify added the
+opening size, minimum size and title, and `tabFocus` (requests 11, 12).
 
 - **Startup**: the template's `build.rs` points `CHAIN_PACKAGE_JSON` at
   the nearest `package.json`; `window.rs` compiles it in, and
@@ -30,6 +31,14 @@ bar; request 40 added when the window first shows.
   `window_page_painted` (two animation frames after it loads, on every
   page load) show it once, emitting `chain://window-shown`. Reloads
   find `awaiting` empty and change nothing.
+- **Size, minimum size, title, Tab focus** (`size`, `minSize`, `title`,
+  `tabFocus`): startup-only keys, `chain_core::window::Launch`.
+  `window::configure` writes `size` and `title` into the generated
+  Tauri config before `.build`, so the window is created at that size
+  and centred. `setup` sets `minSize` (after the chrome, which changes
+  the bar macOS measures it against) and, for `tabFocus: "all"`, turns
+  on WKPreferences `tabFocusesLinks` (`set_tab_focuses_all`), which
+  WebKit treats as Tab reaching every control.
 - **Drag regions**: the SDK (`packages/sdk/src/window.ts`) measures
   `data-chain-drag-region` elements and their holes (interactive
   elements, `="false"`) and sends them on every layout change. On macOS
@@ -82,6 +91,18 @@ if (await desktop.window.isShown()) start();
 else desktop.window.onShown(start);
 ```
 
+Open at a size, never smaller than the layout needs, with a real title,
+and let Tab reach every button as in Chromium:
+
+```json
+"chain": { "window": {
+  "size": { "width": 1440, "height": 920 },
+  "minSize": { "width": 1180, "height": 760 },
+  "title": "Lazify",
+  "tabFocus": "all"
+} }
+```
+
 Restart `chain dev` after editing `package.json`'s options. Prefer
 `titleBarSize` over `windowButtons.position` for a native feel. Full
 semantics: `CONTRACT.md`; per-platform support: `availability()`.
@@ -93,7 +114,7 @@ semantics: `CONTRACT.md`; per-platform support: `availability()`.
 - `crates/core/swift/ChainWindow.swift` — drag view, title bar size, button placer
 - `crates/core/build.rs` — compiles the Swift file, links AppKit
 - `packages/cli/templates/window.rs` (copy: `apps/playground/src-tauri/src/window.rs`) — Tauri commands, setup, window events
-- `packages/cli/templates/build.rs`, `lib.rs` — `CHAIN_PACKAGE_JSON`, wiring
+- `packages/cli/templates/build.rs`, `lib.rs` — `CHAIN_PACKAGE_JSON`, wiring, `window::configure` on the generated context
 - `packages/sdk/src/window.ts` — API, drag-region measuring, CSS variables, the first-paint signal
 - `research/MACOS.md` (measurements, what didn't work), `research/WINDOWS.md`
 - `apps/playground/index.html` + `src/launchScreen.ts` — a worked launch screen: inline HTML/CSS so it's the first frame with `firstPaint`, progress animating only after `onShown`, dismissed once the app has loaded

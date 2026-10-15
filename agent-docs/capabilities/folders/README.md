@@ -57,7 +57,7 @@ const env = await desktop.folders.readText(`${project.path}/.env`);
 await desktop.folders.writeText(`${project.path}/.env`, updated); // atomic
 const preview = await desktop.folders.readBytes(imagePath, { maxBytes: 16 * 1024 * 1024 });
 await desktop.folders.createFolder(`${project.path}/.lazify/api-studio`);
-await desktop.folders.move(oldPath, newPath);
+await desktop.folders.move(oldPath, newPath); // copies across volumes, links and modes kept
 await desktop.folders.delete(path, { toTrash: true });
 
 // Incremental read of a growing log in a declared folder (Mneme request 11).

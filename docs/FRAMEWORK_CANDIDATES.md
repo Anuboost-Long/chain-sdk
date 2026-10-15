@@ -93,6 +93,8 @@ Used by:
 
 - Mneme (real consumer — requested it; see
   `docs/chain-sdk-requests/04-lms-page-fetch.md` in the mneme repo)
+- Lazify (API Studio's request runner; `trustLoopbackCertificates` from
+  its `docs/chain-sdk-requests/19-loopback-tls-trust.md`)
 
 Generalizable:
 Yes — a webview `fetch()` to an arbitrary external origin hits ordinary
@@ -435,7 +437,10 @@ Possible package:
 Used by:
 mneme (request 38 — run its dark nav bar to the top of the window with
 the window buttons on it, instead of under macOS 27's solid title bar;
-request 40 — show the window only once its launch screen has painted)
+request 40 — show the window only once its launch screen has painted);
+lazify (request 11 — open at 1440×920, never smaller than 1180×760,
+titled "Lazify"; request 12 — Tab reaching every button, as in
+Electron)
 
 Generalizable:
 Yes — every desktop app with its own top bar (the Notion/Linear/VS Code
@@ -513,7 +518,8 @@ Possible package:
 
 Used by:
 lazify (requests 01 and 02 — open and index project folders, edit
-`.env`, project-local data, change events), mneme (request 11 — read
+`.env`, project-local data, change events; 14 — move a staged project
+onto another volume), mneme (request 11 — read
 other tools' session files incrementally, through declared folders)
 
 Generalizable:

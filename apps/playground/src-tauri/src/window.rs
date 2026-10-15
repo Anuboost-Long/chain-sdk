@@ -3,13 +3,14 @@
 // The startup options are package.json's "chain.window", compiled in
 // (build.rs points CHAIN_PACKAGE_JSON at it) and applied in setup, before
 // the first frame — including when the window first shows (showWhen),
-// which keeps it undrawn until then. Options, defaults and the AppKit work are
-// chain_core::window. See agent-docs/capabilities/window/.
+// which keeps it undrawn until then. Its size and title go into Tauri's
+// config before the window exists (configure). Options, defaults and the
+// AppKit work are chain_core::window. See agent-docs/capabilities/window/.
 
 use std::collections::HashMap;
 use std::sync::{mpsc, Mutex};
 
-use chain_core::window::{self as core, Appearance, Chrome, FirstShow, Insets, ResolvedOptions, ShowWhen};
+use chain_core::window::{self as core, Appearance, Chrome, FirstShow, Insets, Launch, ResolvedOptions, ShowWhen};
 use tauri::{Emitter, Manager, Runtime, Theme, WindowEvent};
 
 const PACKAGE_JSON: &str = include_str!(env!("CHAIN_PACKAGE_JSON"));
@@ -134,12 +135,35 @@ fn show<R: Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
     })?
 }
 
+/// Puts package.json's "chain.window" size and title into tauri.conf.json's
+/// windows before Tauri creates them, so they open that way. The minimum
+/// size waits for setup: set here, macOS measures it against the title bar
+/// the window had before its chrome was applied. Without those keys it
+/// changes nothing.
+pub fn configure<R: Runtime>(context: &mut tauri::Context<R>) -> Result<(), String> {
+    let launch = Launch::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
+    for window in &mut context.config_mut().app.windows {
+        if let Some(size) = launch.size {
+            (window.width, window.height) = (size.width, size.height);
+            window.center = true;
+        }
+        if let Some(min) = launch.min_size {
+            (window.width, window.height) = (window.width.max(min.width), window.height.max(min.height));
+        }
+        if let Some(title) = &launch.title {
+            window.title.clone_from(title);
+        }
+    }
+    Ok(())
+}
+
 /// Applies package.json's "chain.window" to the windows Tauri created
 /// from tauri.conf.json. Without options it changes nothing at all. Setup
 /// runs before the first frame, so a window kept undrawn never flashes.
 pub fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let chrome = Chrome::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
     let first_show = FirstShow::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
+    let launch = Launch::from_package_json(PACKAGE_JSON).map_err(|e| e.0)?;
     let awaiting = Some(first_show.effective_when()).filter(|when| *when != ShowWhen::Immediately);
     for (label, window) in app.windows() {
         if !is_app_window(&label) {
@@ -147,6 +171,15 @@ pub fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::
         }
         if chrome != Chrome::default() {
             apply(&window, &chrome, &Chrome::default())?;
+        }
+        if let Some(min) = launch.min_size {
+            window.set_min_size(Some(tauri::LogicalSize::new(min.width, min.height)))?;
+        }
+        #[cfg(target_os = "macos")]
+        if launch.tab_focus == core::TabFocus::All {
+            for webview in window.webviews() {
+                webview.with_webview(|page| core::set_tab_focuses_all(page.inner(), true))?;
+            }
         }
         if awaiting.is_some() {
             set_undrawn(&window, true)?;

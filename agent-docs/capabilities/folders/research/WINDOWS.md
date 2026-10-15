@@ -54,4 +54,10 @@ error or rescan, which becomes a `rescan` change.
 - [ ] Atomic `writeText` while VS Code has the file open.
 - [ ] `move` a folder whose files a dev server holds → `UNAVAILABLE`.
 - [ ] Case-only rename.
+- [ ] Cross-volume `move` (std's `MoveFileExW` has no
+      `MOVEFILE_COPY_ALLOWED`, so it fails `ERROR_NOT_SAME_DEVICE`,
+      i.e. `CrossesDevices`, and the copy fallback runs). Try it without
+      Developer Mode on a tree with a symlink (`symlink_file`/`symlink_dir`
+      need the privilege) and on an `npm install`ed tree, which has
+      `.cmd` shims instead.
 - [ ] `watch` + `npm install` in the folder → `rescan` or changes, no crash.

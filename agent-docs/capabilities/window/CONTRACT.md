@@ -10,7 +10,9 @@ Requested by mneme (request 38): on macOS 27 the default title bar draws
 as a solid strip above mneme's own dark nav bar, and an app may not
 touch Tauri's window options itself. Request 40 added when the window
 first shows: a dark page showed a white frame (the startup background)
-before its launch screen.
+before its launch screen. Lazify added the window's opening size,
+minimum size and title (request 11), and Tab reaching every control
+(request 12).
 
 ## Defaults: today's window
 
@@ -149,6 +151,44 @@ another app meanwhile — showing never takes focus from another app.
 Only the first appearance counts: reloading the page, or a hot reload
 in `chain dev`, never hides the window again.
 
+## Size and title
+
+Startup-only keys in package.json's `"chain.window"`;
+`setOptions()` rejects them with `INVALID_ARGUMENT`.
+
+- **`size`** `{ width, height }`: the size the window opens at,
+  centred on the screen. Default: the native project's (800×600).
+- **`minSize`** `{ width, height }`: the smallest the user can resize
+  the window to. Default: no minimum. With `minSize` but no `size`,
+  the window opens at least that big.
+- **`title`**: the window's title, as the title bar (when
+  `titleVisible`), the Window menu and Mission Control show it.
+  Default: the project name. The app's name in the menu bar and Dock is
+  not this; it's the product name.
+
+Sizes are in CSS pixels at 100% page zoom and measure the area the page
+gets: below a `standard` or `transparent` title bar, the whole window
+with `overlay` or `hidden`. Both numbers must be positive, and `size`
+can't be smaller than `minSize`; otherwise the app stops at startup
+naming the key. The size isn't remembered between launches.
+
+## Tab focus
+
+**`tabFocus`** (startup-only, like the keys above): which elements Tab
+moves focus to.
+
+- `"system"` (default): what the OS setting says. On macOS, with System
+  Settings → Keyboard → Keyboard navigation off (its default), Tab
+  reaches only text fields and lists, not buttons or links.
+- `"all"`: every focusable element — buttons, links, form fields,
+  anything with a `tabindex` — as in Chromium, whatever the setting.
+  On macOS Option-Tab then moves through the reduced set instead, as in
+  Safari. Kept across reloads.
+
+Windows (WebView2) and Linux (WebKitGTK) already reach every element,
+so both values do the same there. The page's own focus order and
+focus styles are the app's.
+
 ## Dragging the window
 
 - **`data-chain-drag-region`** on an element makes it, and everything
@@ -234,6 +274,8 @@ Options that don't work are accepted and ignored — never an error.
 | insets | yes | all zero (no chrome over the page) | all zero |
 | full screen | yes | yes | yes |
 | `showWhen` `firstPaint`, `showCalled` | yes | falls back to `immediately` | falls back to `immediately` |
+| `size`, `minSize`, `title` | yes | yes | yes |
+| `tabFocus` `all` | yes | already the behaviour | already the behaviour |
 
 Only macOS is verified; see `research/`.
 
@@ -242,14 +284,16 @@ Only macOS is verified; see `research/`.
 | Code | When |
 | --- | --- |
 | `UNSUPPORTED` | outside a Chain app (`availability()` never rejects) |
-| `INVALID_ARGUMENT` | `setOptions()` with an unknown key or style, malformed colour, or negative/non-finite position, or with `showWhen`/`showTimeout` |
+| `INVALID_ARGUMENT` | `setOptions()` with an unknown key or style, malformed colour, or negative/non-finite position, or with a startup-only key (`showWhen`, `showTimeout`, `size`, `minSize`, `title`, `tabFocus`) |
 | `NATIVE_FAILURE` | anything else |
 
 ## Non-goals
 
 - Toolbars, title bar accessory views, tabs in the title bar, a
   document proxy icon.
-- Window size, position, minimum size, or multiple-window management.
+- Changing the size, minimum size or title at runtime; window
+  position; remembering size or position between launches;
+  multiple-window management.
 - Vibrancy/translucent materials behind the page.
 - Drawing replacement window buttons for `hidden` — the app's job.
 - Remembering runtime changes across launches.

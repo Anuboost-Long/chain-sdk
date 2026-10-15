@@ -196,6 +196,27 @@ code`, and the old app window never closes. `spawnTauri()` spawns with
   terminate immediately, which skips `killChildTree()` and orphans the
   detached `tauri`/Vite/app process tree exactly like the bug the
   process-group kill above was written to fix.
+- **When the tauri child exits on its own, its group is signalled too.**
+  A failed start (lazify's first `chain dev`: `beforeDevCommand` exited
+  non-zero) could leave Vite and app processes behind holding the port;
+  the child's `exit` handler sends `SIGTERM` to its process group
+  (POSIX) before reporting the exit.
+- **A taken port 1420 moves this run to the next free one** (lazify
+  request 13: two Chain apps in development at once — an app and
+  mneme, or the playground). The template pins Vite to 1420 with
+  `strictPort` and `tauri.conf.json`'s `devUrl` to the same port, so
+  `freeDevPort()` (`src/devPort.ts`) checks 1420 up on both `127.0.0.1`
+  and `::1` — Vite listens on `localhost`, which on macOS is `::1`, so
+  a check on IPv4 alone reported a held 1420 as free — and, when it isn't
+  1420, `spawnTauri()` passes `tauri dev --config` with that `devUrl` and
+  `beforeDevCommand` + ` -- --port <n>` (Vite's command-line port beats
+  `vite.config.ts`; `strictPort` stays on, so it never drifts silently).
+  Nothing in the app changes. Output says `port 1420 is in use — using
+  1421`, and the Frontend line shows Vite's own URL. Picked again on
+  every `r`. A `beforeDevCommand` that isn't a plain `npm run <script>`
+  can't be given a port, so then it stops with an error naming 1420.
+  `chain inspect` is unaffected: its info file is per app
+  (`.chain/native/target/`) and its own port is ephemeral.
 - Extra args after `chain dev` are forwarded to `tauri dev` as-is (e.g.
   a scripted `chain dev -- --release`, though scaffolded apps don't need
   this).
@@ -874,6 +895,9 @@ build`): the engine against real SQLite. Add a case here for any new
   condensed-output state/types, `processLine()`, `maybePrintStatus()`,
   `makeColor()`. Change cargo/Vite/Tauri-CLI output parsing here, not in
   either command file, or the two commands will drift.
+- `packages/cli/src/devPort.ts` (tests: `test/devPort.test.mjs`) —
+  `chain dev`'s free-port choice and the `--config` that hands it to
+  Vite and the window.
 - `packages/cli/src/dev.ts` — `chain dev`: spawns `tauri dev` via the
   shared helpers above and handles the `r`/`v`/`q` keys and the
   restart/quit process-tree-kill logic (`killChildTree()`, the

@@ -59,6 +59,24 @@ permissions, then `rename`. Verified: a `0600` `.env` stays `0600`, and
 no `.chain-tmp` is left behind. Writing through a symlink resolves to the
 target first, so the link stays a link.
 
+## Moving across volumes
+
+`rename(2)` returns `EXDEV` across devices (`ErrorKind::CrossesDevices`).
+`move()` then copies with a plain `std::fs` walk instead of
+`copyfile(3)`'s `COPYFILE_RECURSIVE`, so Windows shares the code:
+`symlink_metadata` per entry, `read_link` + `symlink` for links (never
+followed, dangling ones included), `create_dir` and the folder's mode
+set after its contents (so a `0555` folder can still be filled), and
+`fs::copy` for files. On macOS `fs::copy` tries `fclonefileat`, then
+`fcopyfile` with `COPYFILE_ALL`, so the mode, ACLs and extended
+attributes come along.
+
+Measured with an APFS disk image mounted in a temp folder (its own
+`st_dev`): 80 MB / 735 entries of `node_modules` in ~160 ms, identical
+under `diff -r --no-dereference`. Running out of space mid-copy left
+nothing on the target volume, since the copy goes into `.chain-move-<id>/`
+first and the `rename` into place is on that volume.
+
 ## Listing performance
 
 A recursive `list()` of `~/Work/lazify` (52,903 entries, `node_modules`

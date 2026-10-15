@@ -75,7 +75,11 @@ HTML body) and that a non-2xx response resolves rather than rejects
 (`agent-docs/capabilities/http/research/WINDOWS.md` has the specific
 risk to check first: whether the OS certificate store is actually
 consulted the way `native-tls`/SChannel is documented to on a real
-managed-machine proxy/root-cert setup).
+managed-machine proxy/root-cert setup). Since 2026-10-15 a request can
+opt into `trustLoopbackCertificates` for a self-signed local dev server
+(lazify-chain request 19) — verified on macOS (unit tests, and in
+lazify-chain's running app against a real self-signed certificate), not
+yet on Windows.
 
 `agent-server` (a local `127.0.0.1`-only HTTP listener forwarding
 requests to a JS handler, so an external AI agent process can call into
@@ -123,7 +127,9 @@ verified end to end on macOS: listing, reads, byte ranges, atomic
 writes, moves, Trash, watching, and the picker. Drag-and-drop granting
 and a real privacy-protection denial weren't exercised. Lazify's request 06 added `appFolder("data" | "temp")`, the
 app's own read-write folders with real paths, verified with a shadow
-`git --git-dir` repo run through `process-runner`. Windows isn't
+`git --git-dir` repo run through `process-runner`. Request 14 made
+`move()` copy across volumes (links and modes kept), verified with a
+`node_modules` tree moved onto a mounted disk image. Windows isn't
 started (`research/WINDOWS.md`).
 
 `terminal` (Lazify request 04) runs programs in a pseudo-terminal owned
@@ -266,4 +272,8 @@ screen with real events, and a person watching a real launch for a
 white frame are still to be confirmed. Windows and Linux are ⚠: only
 the portable subset (standard/hidden, appearance, background, drag,
 full screen) applies, `showWhen` falls back to `immediately`, through Tauri's own calls, never run there
-(`agent-docs/capabilities/window/research/WINDOWS.md`).
+(`agent-docs/capabilities/window/research/WINDOWS.md`). Lazify's requests 11 and 12 added
+startup-only `size`, `minSize`, `title` and `tabFocus`: size, centring,
+title, the minimum (standard bar) and WebKit's `tabFocusesLinks` read
+back right on macOS 27, and in lazify a hand drag stopped at the
+minimum and a real Tab press walked its buttons.

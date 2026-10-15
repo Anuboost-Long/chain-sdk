@@ -119,7 +119,7 @@ export interface FoldersApi {
   writeBytes(path: string, bytes: Uint8Array): Promise<void>;
   /** Creates the folder and any missing parents. Already existing is fine. */
   createFolder(path: string): Promise<void>;
-  /** Renames or moves a file or folder. Fails if `to` already exists. */
+  /** Renames or moves a file or folder, copying across volumes (links kept as links, modes kept). Fails if `to` already exists. */
   move(from: string, to: string): Promise<void>;
   /** Deletes a file, a symlink (never its target) or a folder with everything in it. Idempotent. */
   delete(path: string, options?: DeleteOptions): Promise<void>;

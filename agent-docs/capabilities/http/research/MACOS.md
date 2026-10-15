@@ -49,6 +49,15 @@ There is no macOS-specific Rust code in `crates/core/src/http.rs`.
   real DNS resolution, a real TLS handshake against a real certificate,
   and the full JS → SDK-shape IPC → Rust → `reqwest` round trip.
 
+## Loopback certificate trust (request 19)
+
+native-tls on macOS is Secure Transport, which negotiates at most TLS
+1.2 — the test server's rustls needs its `tls12` feature, or the
+handshake fails "bad protocol version" (-9836). Keychain import
+(`native_tls::Identity::from_pkcs8`) refuses rcgen's ECDSA keys
+("Unknown format in import", -25257), which is why the test server is
+rustls, not native-tls.
+
 ## Not yet verified
 
 - Behavior against a real LMS-shaped page specifically (redirects,

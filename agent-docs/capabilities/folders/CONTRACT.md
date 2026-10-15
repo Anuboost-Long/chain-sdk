@@ -10,7 +10,8 @@ survive restarts.
 
 Driven by Lazify's request 01 (a developer workbench whose whole subject
 is the user's project folders), request 02 (change events in those
-folders), request 06 (folders of the app's own), and Mneme's request 11
+folders), request 06 (folders of the app's own), request 14 (moving a
+staged project onto another volume), and Mneme's request 11
 (read-only access to other tools' data, such as `~/.claude/projects`).
 
 This is deliberately **not** `desktop.files`. `files` stores the app's own
@@ -169,8 +170,17 @@ folder rejects with `NOT_GRANTED`.
 - `move(from, to)` renames or moves a file, folder or symlink. Both paths
   must be inside read-write grants. It rejects with `INVALID_ARGUMENT` if
   `to` already exists. The exception is a case-only rename (`Readme.md` →
-  `README.md`) on a case-insensitive volume, which is allowed. Moving
-  across volumes is not supported and rejects with `NATIVE_FAILURE`.
+  `README.md`) on a case-insensitive volume, which is allowed.
+  **Across volumes** (`appFolder("temp")` to a folder on an external
+  drive, a second volume or a network share), `move` copies instead.
+  Symlinks are copied as links, never followed, and file and folder
+  modes are kept. The copy goes into a hidden `.chain-move-<id>` folder
+  beside `to` and is renamed into place only once complete, so a failed
+  copy leaves nothing at `to` and `from` untouched. `from` is removed
+  only after that. If removing it fails, `move` rejects with
+  `NATIVE_FAILURE` and a message saying so: `to` is then complete, and
+  whatever couldn't be removed stays at `from`. A copy that isn't a move
+  isn't offered.
 - `delete(path, { toTrash? })` removes a file or a symlink (never its
   target), or a folder and everything in it. It's idempotent: a path that
   doesn't exist resolves. With `toTrash`, the item goes to the Trash
@@ -208,7 +218,7 @@ changed and the app should re-read what it cares about.
 | `UNAVAILABLE` | The file is locked by another process (Windows sharing violations). |
 | `TOO_LARGE` | The read would exceed `maxBytes`. |
 | `UNSUPPORTED` | Outside a Chain runtime, or `toTrash` on a platform without it. |
-| `NATIVE_FAILURE` | Anything else, including a cross-volume `move`. |
+| `NATIVE_FAILURE` | Anything else, including a cross-volume `move` whose original couldn't be removed after the copy. |
 
 ## Non-goals
 
@@ -225,8 +235,10 @@ changed and the app should re-read what it cares about.
   `terminal`, which check a `cwd` against these grants.
 - **No glob filtering, content diffing or debouncing of changes.**
   Watches don't persist across restarts or reloads.
-- **No copy.** Nothing asked for it yet. Lazify's template copy can read
-  and write each file.
+- **No `copy()`.** A cross-volume `move` copies when it has to (request
+  14), and Lazify's template copy reads and writes each file. Progress
+  events, cancellation and merging into an existing folder aren't
+  offered either.
 - **No OS security-scoped bookmarks.** Chain apps aren't sandboxed, so a
   grant is an app-level policy that Chain Core enforces. The grant id is
   opaque, so a sandboxed build could attach a bookmark to it later without

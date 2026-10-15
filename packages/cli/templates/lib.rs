@@ -1462,6 +1462,9 @@ pub fn run() {
     #[cfg(feature = "chain-dev-inspector")]
     chain_core::dev_launch::become_responsible_for_itself();
 
+    let mut context = tauri::generate_context!();
+    window::configure(&mut context).unwrap_or_else(|e| panic!("{e}"));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StorageState(Mutex::new(None)))
@@ -1611,7 +1614,7 @@ pub fn run() {
             pdf::pdf_render,
             __chain_inspector_report
         ]))
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running tauri application")
         .run(|app, event| {
             // Processes and terminal sessions run in their own process

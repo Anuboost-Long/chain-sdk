@@ -76,5 +76,10 @@ checklist below is for.
       clear error (not a silent hang) when it isn't trusted.
 - [ ] Confirm the 30s request timeout is a reasonable fit for real
       school/corporate network latency.
+- [ ] `trustLoopbackCertificates` (request 19): `cargo test -p chain-core
+      http::` passes the self-signed loopback tests under SChannel —
+      including `https://127.0.0.1` against a cert for `localhost`,
+      which needs `danger_accept_invalid_hostnames` there — and a
+      `dotnet dev-certs https` server answers through the SDK.
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and this
       capability's `component.json` once confirmed.

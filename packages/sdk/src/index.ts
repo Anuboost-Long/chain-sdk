@@ -226,6 +226,8 @@ export type {
   WindowOptions,
   WindowStartupOptions,
   ShowWhen,
+  WindowSize,
+  TabFocus,
   WindowButtonsOptions,
   WindowButtonsPosition,
   WindowAppearance,

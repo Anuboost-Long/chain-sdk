@@ -149,6 +149,36 @@ with status 404 Not Found", `response.status` 404),
 callers (`lms-import.ts`, `downloadImage.ts`) were moved to the
 reject-by-default shape.
 
+### Loopback certificate trust — 15 October 2026
+
+lazify-chain's request 19 (API Studio sending requests to a local dev
+server with a self-signed certificate): `trustLoopbackCertificates`.
+Decided:
+
+- **Chain decides "is this loopback", not the app.** Lazify offered to
+  compute it and pass a plain `insecure` flag; a flag that only works on
+  loopback can't be misused against a remote host by any caller, so the
+  check lives in `is_loopback()` and the option is named for that.
+- **A redirect off loopback rejects.** reqwest's TLS settings are
+  per-client, not per-connection the way Electron's undici connector is,
+  so a followed redirect would reach the remote host unverified.
+  `loopback_only_redirects()` refuses it instead (and keeps reqwest's
+  10-redirect limit); `send_error` surfaces the policy's message, since
+  reqwest's own reads only "error following redirect".
+- Both `danger_accept_invalid_certs` and
+  `danger_accept_invalid_hostnames` are set, so a cert for `localhost`
+  also works at `127.0.0.1` whichever TLS backend checks names separately.
+
+Verified on macOS by unit tests against a self-signed `localhost` HTTPS
+server (rcgen + rustls, dev-dependencies only): refused without the
+flag, accepted with it by name and by `127.0.0.1` (name mismatch), and
+a 302 to `https://example.com` rejects. The lazify-chain session then
+verified it in its running app (`chain dev` + `chain inspect`): a
+`responseType: "bytes"` GET to `https://127.0.0.1:<port>` serving a real
+openssl self-signed certificate returned 200 with the right body through
+API Studio's runner. Not yet tried with a `dotnet dev-certs` certificate
+specifically, nor on Windows.
+
 ## What's NOT done yet (next steps for an agent to pick up)
 
 - [ ] Verify on Windows — do NOT mark the contract/component status
@@ -164,6 +194,9 @@ reject-by-default shape.
       CDN) → 22 KB `Uint8Array`, PNG signature, `image/png`, stored and
       read back identical through `desktop.files`; `maxBytes: 1000` →
       `TOO_LARGE`; text requests unchanged.
+- [x] `trustLoopbackCertificates` end to end in lazify-chain's API Studio
+      against a real self-signed (openssl) dev server, macOS.
+- [ ] `trustLoopbackCertificates` on Windows (see `research/WINDOWS.md`).
 - [ ] Add contract tests under `capabilities/http/tests/` — currently
       the only test is `crates/core/src/http.rs`'s Rust unit tests, the
       same gap `storage`/`files` currently have too.

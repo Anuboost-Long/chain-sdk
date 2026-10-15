@@ -475,10 +475,10 @@ impl Folders {
                 return Err(FoldersError::InvalidArgument(format!("{} already exists", target.display())));
             }
         }
-        fs::rename(&source, &target).map_err(|e| match e.kind() {
-            ErrorKind::CrossesDevices => FoldersError::Other(format!("can't move {} across volumes", source.display())),
-            _ => io_error(e, &source),
-        })
+        match fs::rename(&source, &target) {
+            Err(e) if e.kind() == ErrorKind::CrossesDevices => move_across_volumes(&source, &source_meta, &target),
+            result => result.map_err(|e| io_error(e, &source)),
+        }
     }
 
     pub fn delete(&self, path: &str, to_trash: bool) -> Result<()> {
@@ -625,6 +625,66 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&temp);
         io_error(e, path)
     })
+}
+
+/// Copies into a hidden folder beside `target`, renames that into place,
+/// then removes `source`. A failed copy leaves nothing at `target`.
+fn move_across_volumes(source: &Path, source_meta: &fs::Metadata, target: &Path) -> Result<()> {
+    let parent = target.parent().ok_or_else(|| FoldersError::InvalidArgument(format!("{} has no folder", target.display())))?;
+    let staging = parent.join(format!(".chain-move-{}", generate_id()));
+    fs::create_dir(&staging).map_err(|e| io_error(e, parent))?;
+    let staged = staging.join(target.file_name().unwrap_or_default());
+    let placed = copy_entry(source, source_meta, &staged)
+        .and_then(|()| fs::rename(&staged, target).map_err(|e| io_error(e, target)));
+    let _ = fs::remove_dir_all(&staging);
+    placed?;
+
+    let removed = if source_meta.is_dir() { fs::remove_dir_all(source) } else { fs::remove_file(source) };
+    removed.map_err(|e| {
+        FoldersError::Other(format!(
+            "{} was copied to {}, but removing the original failed: {e}",
+            source.display(),
+            target.display()
+        ))
+    })
+}
+
+/// Symlinks are recreated as links, never followed. `fs::copy` keeps the
+/// mode (and on macOS, copyfile's ACLs and extended attributes).
+fn copy_entry(from: &Path, meta: &fs::Metadata, to: &Path) -> Result<()> {
+    let file_type = meta.file_type();
+    if file_type.is_symlink() {
+        let link = fs::read_link(from).map_err(|e| io_error(e, from))?;
+        make_symlink(&link, from, to).map_err(|e| io_error(e, to))
+    } else if file_type.is_dir() {
+        fs::create_dir(to).map_err(|e| io_error(e, to))?;
+        for item in fs::read_dir(from).map_err(|e| io_error(e, from))? {
+            let item = item.map_err(|e| io_error(e, from))?;
+            let item_meta = item.metadata().map_err(|e| io_error(e, &item.path()))?;
+            copy_entry(&item.path(), &item_meta, &to.join(item.file_name()))?;
+        }
+        // Last, so a read-only folder can still be filled.
+        fs::set_permissions(to, meta.permissions()).map_err(|e| io_error(e, to))
+    } else if file_type.is_file() {
+        fs::copy(from, to).map(|_| ()).map_err(|e| io_error(e, from))
+    } else {
+        Err(FoldersError::Other(format!("{} is a socket or device and can't be copied", from.display())))
+    }
+}
+
+#[cfg(unix)]
+fn make_symlink(link: &Path, _from: &Path, to: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(link, to)
+}
+
+/// Windows needs the link's kind; it follows `from` to find it.
+#[cfg(windows)]
+fn make_symlink(link: &Path, from: &Path, to: &Path) -> std::io::Result<()> {
+    if fs::metadata(from).is_ok_and(|meta| meta.is_dir()) {
+        std::os::windows::fs::symlink_dir(link, to)
+    } else {
+        std::os::windows::fs::symlink_file(link, to)
+    }
 }
 
 /// Windows refuses to replace a file another process has open; those
@@ -888,6 +948,53 @@ mod tests {
         assert!(fs::read_dir(&f.project).unwrap().flatten().any(|e| e.file_name() == "README.md"));
         assert!(matches!(f.folders.move_entry(&s(&f.project), &s(&f.project.join("x"))), Err(FoldersError::InvalidArgument(_))));
         assert!(matches!(f.folders.delete(&s(&f.project), false), Err(FoldersError::InvalidArgument(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_move_across_volumes_copies_links_and_modes_and_leaves_nothing_on_failure() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let f = fixture();
+        let staged = f.project.join("staged");
+        fs::create_dir_all(staged.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(staged.join("node_modules/.bin")).unwrap();
+        fs::write(staged.join("node_modules/pkg/cli.js"), "#!/usr/bin/env node").unwrap();
+        fs::set_permissions(staged.join("node_modules/pkg/cli.js"), fs::Permissions::from_mode(0o755)).unwrap();
+        symlink("../pkg/cli.js", staged.join("node_modules/.bin/cli")).unwrap();
+        symlink("missing", staged.join("dangling")).unwrap();
+        fs::create_dir(staged.join("private")).unwrap();
+        fs::set_permissions(staged.join("private"), fs::Permissions::from_mode(0o700)).unwrap();
+
+        let placed = f.project.join("placed");
+        move_across_volumes(&staged, &fs::symlink_metadata(&staged).unwrap(), &placed).unwrap();
+        assert!(!staged.exists());
+        let mode = |p: &Path| fs::symlink_metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&placed.join("node_modules/pkg/cli.js")), 0o755);
+        assert_eq!(fs::read_link(placed.join("node_modules/.bin/cli")).unwrap(), Path::new("../pkg/cli.js"));
+        assert_eq!(fs::read_to_string(placed.join("node_modules/.bin/cli")).unwrap(), "#!/usr/bin/env node");
+        assert_eq!(fs::read_link(placed.join("dangling")).unwrap(), Path::new("missing"));
+        assert_eq!(mode(&placed.join("private")), 0o700);
+
+        let locked = f.project.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("inside"), "i").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        copy_entry(&locked, &fs::metadata(&locked).unwrap(), &placed.join("locked")).unwrap();
+        assert_eq!(mode(&placed.join("locked")), 0o555);
+        assert_eq!(fs::read_to_string(placed.join("locked/inside")).unwrap(), "i");
+        for folder in [&locked, &placed.join("locked")] {
+            fs::set_permissions(folder, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        fs::write(placed.join("unreadable"), "u").unwrap();
+        fs::set_permissions(placed.join("unreadable"), fs::Permissions::from_mode(0o000)).unwrap();
+        let again = f.project.join("again");
+        assert!(move_across_volumes(&placed, &fs::symlink_metadata(&placed).unwrap(), &again).is_err());
+        assert!(placed.join("node_modules/pkg/cli.js").exists());
+        let names: Vec<_> = fs::read_dir(&f.project).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(names.iter().all(|n| n != "again" && !n.to_string_lossy().starts_with(".chain-move-")), "{names:?}");
+        fs::set_permissions(placed.join("unreadable"), fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]

@@ -3,7 +3,7 @@
 Scope: `desktop.folders` — real paths inside folders the user granted
 (picked or dropped, read-write, persisted) plus folders the app declares
 read-only in `package.json`, with list, read, atomic write, move, delete
-and watch. Requested by Lazify (requests 01 and 02 in
+and watch. Requested by Lazify (requests 01, 02, 06, 10 and 14 in
 `lazify-chain/docs/chain-sdk-requests/`), and it also answers Mneme's
 request 11 (`external-file-read`).
 
@@ -62,6 +62,14 @@ Read order for a task in this capability:
 - **File work runs off the main thread** (`off_main` in
   `templates/folders.rs`). Sync Tauri commands run on the main thread,
   and a recursive listing would freeze the window.
+- **Request 14 (copy across volumes) is a `move()` fallback, not a
+  `copy()`.** The requester said it would answer the whole request, and
+  it needs no new method or error code. On `EXDEV` (`ERROR_NOT_SAME_DEVICE`
+  on Windows, both `ErrorKind::CrossesDevices`), `move_across_volumes`
+  copies into `.chain-move-<id>/` beside the target, renames into place,
+  then removes the source. The walk is plain `std::fs` (`fs::copy` is
+  `fcopyfile` with `COPYFILE_ALL` on macOS, so modes, ACLs and xattrs
+  come along), so the same code serves Windows.
 - **Bytes travel raw:** `readBytes` returns `tauri::ipc::Response`, and
   `writeBytes` sends one raw body (u32 LE path length, path, bytes).
 
@@ -133,6 +141,30 @@ on Windows (rule 3), so it stays `draft`/`experimental`.
   `NOT_GRANTED`, and listing the file is `INVALID_ARGUMENT`. Lazify
   checks its usage panel against it in its own app.
 
+### Moving across volumes (Lazify request 14) — verified on macOS, 11 October 2026
+
+- Unit test `a_move_across_volumes_copies_links_and_modes_and_leaves_nothing_on_failure`
+  calls `move_across_volumes` on one volume: a `0755` file, a relative
+  `.bin` symlink, a dangling symlink and a `0700` folder come through,
+  a `0555` folder can still be filled, and an unreadable file fails the
+  copy with the source intact and no target or `.chain-move-` folder left.
+- A real cross-volume move through `move_entry`, with a temporary probe
+  test (since removed) and an APFS disk image mounted on another device:
+  `apps/playground/node_modules` (80 MB, 735 entries) moved in ~160 ms.
+  `diff -r --no-dereference` against a reference copy was clean. All 7
+  symlinks and 6 executables survived, `.bin/tsc --version` ran from
+  the new volume, and the source was gone. Moving onto an existing
+  folder gave `INVALID_ARGUMENT`. On a 30 MB image the copy ran out of
+  space (`ENOSPC`, `NATIVE_FAILURE`): the volume was left empty and the
+  source byte-identical.
+- No SDK or template change: the `folders_move` command and
+  `desktop.folders.move()` are unchanged, so apps get it on their next
+  build of `chain-core`.
+- Lazify adopted it (lazify-chain `e7688d7`): one `move()` places a new
+  project, and on the "copied, original not removed" error it keeps `to`
+  and deletes the staging folder. Not yet run across volumes from Lazify
+  itself.
+
 ## What's NOT done yet
 
 - [ ] Drag-and-drop granting (`onDrop`) end to end — needs a real drag.
@@ -143,8 +175,10 @@ on Windows (rule 3), so it stays `draft`/`experimental`.
 - [ ] Tell Mneme that request 11 is answered by declared folders +
       `readBytes({ offset })` (no separate capability) — it's Mneme's
       call to adopt it.
-- [ ] Possibly `copy()` — Lazify's template copy can read and write each
-      file for now. Add only when a request needs it.
+- [ ] Windows: a cross-volume `move` of an `npm install`ed tree. Symlinks
+      there need Developer Mode or a privilege; `node_modules/.bin` holds
+      `.cmd` shims, but a tree with real links would fail the copy without it.
+- [ ] A cross-volume `move` to a network share (SMB) on macOS.
 
 ## Rules specific to this capability
 

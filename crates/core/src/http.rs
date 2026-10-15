@@ -83,6 +83,10 @@ pub struct HttpRequest {
     pub timeout_ms: Option<u64>,
     /// `request_bytes` only.
     pub max_bytes: Option<u64>,
+    /// Accept an unverifiable certificate when the URL's host is loopback;
+    /// ignored for any other host.
+    #[serde(default)]
+    pub trust_loopback_certificates: bool,
 }
 
 /// Bounds how long a stalled connection can hang the caller when no
@@ -154,6 +158,8 @@ fn read_error(e: reqwest::Error) -> HttpError {
 pub(crate) fn send_error(e: reqwest::Error) -> HttpError {
     if e.is_timeout() || e.is_connect() {
         HttpError::Unavailable(e.to_string())
+    } else if let (true, Some(reason)) = (e.is_redirect(), std::error::Error::source(&e)) {
+        HttpError::Other(reason.to_string())
     } else {
         HttpError::Other(e.to_string())
     }
@@ -180,10 +186,14 @@ async fn send(request: HttpRequest) -> Result<(ResponseHead, reqwest::Response),
         headers.append(name, value);
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(request.timeout_ms.map_or(DEFAULT_TIMEOUT, Duration::from_millis))
-        .build()
-        .map_err(|e| HttpError::Other(e.to_string()))?;
+    let mut client = reqwest::Client::builder().timeout(request.timeout_ms.map_or(DEFAULT_TIMEOUT, Duration::from_millis));
+    if request.trust_loopback_certificates && is_loopback(&url) {
+        client = client
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .redirect(loopback_only_redirects());
+    }
+    let client = client.build().map_err(|e| HttpError::Other(e.to_string()))?;
     let mut builder = client.request(method, url);
     if let Some(body) = request.body {
         let (content_type, bytes) = match body {
@@ -222,6 +232,30 @@ async fn send(request: HttpRequest) -> Result<(ResponseHead, reqwest::Response),
         headers: response_headers,
     };
     Ok((head, response))
+}
+
+/// `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0` and `::`.
+fn is_loopback(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    match host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback() || ip.is_unspecified(),
+        Err(_) => host == "localhost" || host.ends_with(".localhost"),
+    }
+}
+
+/// The client that skips certificate checks must never carry the request
+/// to another host, so a redirect off loopback fails instead of following.
+fn loopback_only_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if !is_loopback(attempt.url()) {
+            let message = format!("redirected off loopback to {}, which trustLoopbackCertificates won't follow", attempt.url());
+            attempt.error(message)
+        } else if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// Standard base64 (with or without padding). Small enough not to need a crate.
@@ -344,6 +378,7 @@ mod tests {
             body: Some(HttpBody::Json(r#"{"name":"n"}"#.to_string())),
             timeout_ms: Some(5_000),
             max_bytes: None,
+            trust_loopback_certificates: false,
         })
         .await
         .unwrap();
@@ -481,4 +516,71 @@ mod tests {
         assert!(matches!(result, Err(HttpError::TooLarge(_))));
     }
 
+    /// An HTTPS server on 127.0.0.1 with a fresh self-signed certificate for
+    /// `localhost`, replying to each connection in turn with the given raw responses.
+    fn serve_self_signed(responses: Vec<&'static str>) -> u16 {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+        let config = rustls::ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.cert.der().clone()], key)
+            .unwrap();
+        let config = std::sync::Arc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for response in responses {
+                let (socket, _) = listener.accept().unwrap();
+                let mut stream = rustls::StreamOwned::new(rustls::ServerConnection::new(config.clone()).unwrap(), socket);
+                let mut buf = [0u8; 4096];
+                // A client that refuses the certificate ends the handshake here; move on.
+                if stream.read(&mut buf).is_err() {
+                    continue;
+                }
+                let _ = stream.write_all(response.as_bytes());
+                stream.conn.send_close_notify();
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    const SECURE_OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecure";
+
+    fn trusting(url: String) -> HttpRequest {
+        HttpRequest { url, trust_loopback_certificates: true, timeout_ms: Some(5_000), ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn a_self_signed_loopback_certificate_is_refused_unless_trusted() {
+        let port = serve_self_signed(vec![SECURE_OK, SECURE_OK, SECURE_OK]);
+        let refused = request(HttpRequest { url: format!("https://localhost:{port}/"), ..Default::default() }).await;
+        assert!(refused.is_err());
+
+        let trusted = request(trusting(format!("https://localhost:{port}/"))).await.unwrap();
+        assert_eq!(trusted.body, "secure");
+        // The certificate names localhost, not 127.0.0.1 — the name mismatch is trusted too.
+        let by_ip = request(trusting(format!("https://127.0.0.1:{port}/"))).await.unwrap();
+        assert_eq!(by_ip.body, "secure");
+    }
+
+    #[tokio::test]
+    async fn a_trusted_loopback_request_wont_follow_a_redirect_off_loopback() {
+        let port = serve_self_signed(vec!["HTTP/1.1 302 Found\r\nLocation: https://example.com/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"]);
+        let err = request(trusting(format!("https://localhost:{port}/"))).await.unwrap_err();
+        assert!(err.message().contains("redirected off loopback"), "{err:?}");
+    }
+
+    #[test]
+    fn recognizes_loopback_hosts() {
+        let loopback = |url: &str| is_loopback(&reqwest::Url::parse(url).unwrap());
+        for url in ["https://localhost/", "https://LOCALHOST:5001/", "https://api.localhost/", "https://127.0.0.1/", "https://127.8.9.10/", "https://[::1]:5001/", "https://0.0.0.0/"] {
+            assert!(loopback(url), "{url}");
+        }
+        for url in ["https://example.com/", "https://localhost.example.com/", "https://notlocalhost/", "https://10.0.0.1/", "https://[::ffff:8.8.8.8]/"] {
+            assert!(!loopback(url), "{url}");
+        }
+    }
 }

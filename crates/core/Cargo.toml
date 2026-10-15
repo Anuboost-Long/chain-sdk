@@ -75,6 +75,9 @@ bzip2 = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+# http's trustLoopbackCertificates tests: a self-signed loopback HTTPS server.
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # vision (Vision's text recognizer) and speech's pre-macOS-26 fallback
 # (SFSpeechRecognizer) reach Apple frameworks through objc2's generated
