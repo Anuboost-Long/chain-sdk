@@ -9,6 +9,8 @@ import { dev } from "./dev.js";
 import { build } from "./build.js";
 import { clean } from "./clean.js";
 import { inspect } from "./inspect.js";
+import { chainRoot } from "./scaffold.js";
+import { staleSources } from "./staleBuild.js";
 
 const cliDir = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(cliDir, "../package.json"), "utf8")) as {
@@ -72,6 +74,20 @@ Usage:
 }
 
 const [command, ...args] = process.argv.slice(2);
+
+// A checkout's CLI runs from dist/ but reads templates/ live, so a stale
+// build pairs new templates with an old file list: init and update would
+// half-apply them, so they refuse.
+const stale = staleSources(chainRoot);
+if (stale.length > 0) {
+  const shown = stale.slice(0, 3).join(", ") + (stale.length > 3 ? `, +${stale.length - 3} more` : "");
+  const rebuild = `cd ${chainRoot} && npm run build`;
+  if (command === "init" || command === "update") {
+    console.error(`Error: this chain CLI is older than its source (${shown}). Rebuild it first: ${rebuild}`);
+    process.exit(1);
+  }
+  console.error(`Warning: this chain CLI is older than its source (${shown}); rebuild with: ${rebuild}\n`);
+}
 
 switch (command) {
   case "init": {

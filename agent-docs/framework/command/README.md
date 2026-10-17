@@ -494,6 +494,19 @@ explains that future runs will merge properly from that point on (there's
 no way to reconstruct what the original template looked like, so a real
 merge on that first run isn't possible).
 
+**A stale CLI build refuses to init or update.** In a chain-sdk checkout
+(`npm link`) the `chain` command runs the compiled `dist/`, but reads
+`templates/` live. So after a change to `src/`, such as a new
+`TRACKED_FILES` entry in `scaffold.ts`, an unrebuilt CLI pairs new
+templates with the old file list. That really happened: an update merged
+a `lib.rs` naming a new module and never created the module's file. On
+every command, `staleSources()` (`src/staleBuild.ts`) compares each
+`src/**/*.ts` with its `dist/` file. If any is newer or was never built,
+`init` and `update` exit 1 naming them and the rebuild command
+(`npm run build` in `packages/cli`), and every other command prints the
+same as a warning. An npm-installed CLI ships no `src/`, so it's never
+checked there.
+
 ### `chain inspect` — dev-only automation bridge
 
 Electron dev builds can be driven by Playwright's `_electron` launcher
@@ -862,6 +875,7 @@ If `chain update` reports a conflict, resolve the `<<<<<<< / ======= /
   (`init`, `dev`, `build`, `inspect`, `update`, `migration`, `database`,
   `clean`, `doctor`, `--help`, `--version`, unknown-command and no-args handling).
   Start here for anything about how a flag or subcommand is recognized.
+- `packages/cli/src/staleBuild.ts` — the stale-build check `bin.ts` runs first
 - `packages/cli/src/migration.ts` — `chain migration add/remove/list/
 script/check`: rename detection (`--rename-*` flags, then prompts),
   `latestModel()` (the snapshot `add` diffs against), `migrationStatus()`.
