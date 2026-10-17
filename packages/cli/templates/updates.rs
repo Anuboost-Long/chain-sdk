@@ -147,11 +147,12 @@ pub async fn updates_download(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// Ok(false) when nothing is downloaded — the usual quit, feed or not.
 fn install(app: &tauri::AppHandle) -> Result<bool, String> {
-    let bundle = replaceable().map_err(unsupported)?;
     let Some((_, archive)) = app.state::<UpdatesState>().downloaded.lock().expect("updates mutex poisoned").take() else {
         return Ok(false);
     };
+    let bundle = replaceable().map_err(unsupported)?;
     core::install(&bundle, &archive).map_err(|e| match e {
         core::UpdatesError::Install(m) if m.contains("No space left") => format!("UNAVAILABLE: not enough disk space: {m}"),
         core::UpdatesError::Install(m) | core::UpdatesError::InvalidConfig(m) => m,
@@ -161,6 +162,7 @@ fn install(app: &tauri::AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn updates_install(app: tauri::AppHandle) -> Result<(), String> {
+    replaceable().map_err(unsupported)?;
     if !install(&app)? {
         return Err("NOT_FOUND: no update is downloaded — download() first".to_string());
     }
