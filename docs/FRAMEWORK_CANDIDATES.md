@@ -673,3 +673,26 @@ Not started — `PowerCreateRequest`, research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
+
+## Updates
+
+Used by:
+lazify (request 22 — "Check for updates" in Settings, ad-hoc signed
+first release)
+
+Generalizable:
+Yes — any distributed Chain app
+
+Contract:
+Draft (`agent-docs/capabilities/updates/CONTRACT.md`, `capabilities/updates/contract.ts`)
+
+macOS:
+tauri-plugin-updater (feed, download, Ed25519 check) plus Chain's own
+atomic install and install-on-quit; verified with a test app
+(see CAPABILITY_MATRIX.md)
+
+Windows:
+Not started
+
+Possible package:
+`@chain/sdk` (bundled in core)

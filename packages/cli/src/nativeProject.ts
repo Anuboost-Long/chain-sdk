@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { ensureGitignore, generateNativeProject, readAppIdentity } from "./native.js";
 import { readOnlyFoldersOrExit } from "./readOnlyFolders.js";
 
 /** Where the Tauri native project lives, hidden from day-to-day view (see
@@ -28,24 +29,48 @@ export function inspectorInfoPath(cwd: string): string {
   return path.join(nativeProjectDir(cwd), "target", "chain-inspector.json");
 }
 
-/** Exits the process with a clear error if `cwd` isn't a Chain app, or is
- * one that still has the pre-`.chain/native` layout (needs `chain update`
- * to migrate before `chain dev`/`chain build` can find its native project). */
+/** Whether `cwd` is a Chain app: a package.json with a "chain" block or
+ * @chain/cli, or a native project from before either existed. */
+export function isChainApp(cwd: string): boolean {
+  const pkgPath = path.join(cwd, "package.json");
+  if (!fs.existsSync(pkgPath)) return false;
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  return (
+    pkg.chain !== undefined ||
+    pkg.devDependencies?.["@chain/cli"] !== undefined ||
+    pkg.dependencies?.["@chain/cli"] !== undefined ||
+    fs.existsSync(nativeProjectDir(cwd)) ||
+    fs.existsSync(path.join(cwd, "src-tauri"))
+  );
+}
+
+/** Exits the process with a clear error if `cwd` isn't a Chain app. */
 export function checkChainApp(cwd: string): void {
-  if (!fs.existsSync(path.join(cwd, "package.json"))) {
-    console.error("Error: this doesn't look like a Chain app (no package.json here).");
+  if (!isChainApp(cwd)) {
+    console.error(
+      'Error: this doesn\'t look like a Chain app (no package.json with a "chain" block or @chain/cli here).'
+    );
     process.exit(1);
   }
-  if (fs.existsSync(nativeProjectDir(cwd))) return;
-  if (fs.existsSync(path.join(cwd, "src-tauri"))) {
-    console.error(
-      "Error: this app still has the old src-tauri layout — run `chain update` first to migrate " +
-        "it to .chain/native."
-    );
-  } else {
-    console.error("Error: this doesn't look like a Chain app (no .chain/native here).");
+}
+
+/** checkChainApp, then brings `.chain/native` up to date from chain-sdk's
+ * templates and package.json — recreating it if it's gone. An app from
+ * before `.chain/native` keeps its src-tauri's build cache and Cargo.lock. */
+export function prepareChainApp(cwd: string): void {
+  checkChainApp(cwd);
+  const legacy = path.join(cwd, "src-tauri");
+  if (fs.existsSync(legacy) && !fs.existsSync(nativeProjectDir(cwd))) {
+    fs.mkdirSync(path.dirname(nativeProjectDir(cwd)), { recursive: true });
+    fs.renameSync(legacy, nativeProjectDir(cwd));
+    console.log("  move     src-tauri -> .chain/native");
   }
-  process.exit(1);
+  const written = generateNativeProject(cwd);
+  if (written.length > 0) {
+    const shown = written.length > 4 ? `${written.slice(0, 4).join(", ")}, +${written.length - 4} more` : written.join(", ");
+    console.log(`  generate .chain/native: ${shown}`);
+  }
+  if (ensureGitignore(cwd)) console.log("  update   .gitignore (Chain's rules for .chain/)");
 }
 
 /** Env for spawning `tauri dev`/`tauri build`: TAURI_APP_PATH points the
@@ -89,8 +114,7 @@ export function sharedDevTargetDir(): string {
  * without going through Tauri (which only exists inside a running app).
  */
 export function resolveDbPath(cwd: string): string {
-  const confPath = path.join(nativeProjectDir(cwd), "tauri.conf.json");
-  const { identifier } = JSON.parse(fs.readFileSync(confPath, "utf8")) as { identifier: string };
+  const { identifier } = readAppIdentity(cwd);
 
   let baseDir: string;
   if (process.platform === "darwin") {

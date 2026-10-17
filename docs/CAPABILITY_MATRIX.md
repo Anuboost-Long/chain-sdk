@@ -27,6 +27,7 @@ to see what actually exists vs. what's just planned.
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
 | BrowserView     | 🧪    | ⏳      | ⏳    | Draft    |
+| Updates         | 🧪    | ⏳      | ⏳    | Draft    |
 | Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
 | Window          | 🧪    | ⚠       | ⚠     | Draft    |
 | Pdf             | 🧪    | ⏳      | ⏳    | Draft    |
@@ -264,6 +265,14 @@ surviving relaunch), early page scripts with an `ask()` channel back to
 the app, and `runInFrames()` (every frame, cross-origin included, as a
 user gesture — picture-in-picture verified, behind the opt-in
 `allowPictureInPicture`, which uses an unpublished WebKit preference).
+
+`updates` (lazify request 22 — the built app updates itself) is verified
+on macOS 27 with a `chain init` test app: install-on-quit and
+`installAndRelaunch()` (atomic swap), Ed25519-signed feed with tampered
+archive and lying feed both refused, `read-only` detection, and macOS
+permissions across updates — lost every update when ad-hoc signed, kept
+when signed with a stable (even self-signed) certificate. Windows not
+started.
 
 `embeddings` (request 37 — sentence vectors for search by meaning, from a
 downloaded ONNX model and its Hugging Face tokenizer, on the ONNX Runtime

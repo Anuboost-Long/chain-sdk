@@ -20,6 +20,7 @@ import { speech } from "./speech";
 import { storage } from "./storage";
 import { terminal } from "./terminal";
 import { tts } from "./tts";
+import { updates } from "./updates";
 import { vision } from "./vision";
 import { appWindow } from "./window";
 
@@ -51,10 +52,19 @@ export const desktop = {
   embeddings,
   window: appWindow,
   pdf,
-  share
+  share,
+  updates
 };
 
 export { sql } from "./storage-table";
+export type {
+  AvailableUpdate,
+  UpdateProgress,
+  UpdatesApi,
+  UpdatesStatus,
+  UpdatesUnsubscribe,
+  UpdatesUnsupportedReason
+} from "./contracts/updates";
 
 export type { ChainError, ChainErrorCode } from "./errors";
 export type { PlatformInfo, ChainOs, ChainArch } from "./contracts/platform";

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { checkRustQuietly } from "./doctor.js";
+import { prepareChainApp } from "./nativeProject.js";
 import {
   chainRoot,
   scaffoldContext,
@@ -81,15 +82,14 @@ export async function init(projectName: string): Promise<void> {
   // our templates.
   fs.rmSync(path.join(target, "src/assets"), { recursive: true, force: true });
 
-  // create-tauri-app always writes the native project to src-tauri/ — chain
-  // relocates it to the hidden .chain/native/ right away so a developer never
-  // sees a "src-tauri" folder even for a moment.
-  fs.mkdirSync(path.join(target, ".chain"), { recursive: true });
-  fs.renameSync(path.join(target, "src-tauri"), path.join(target, ".chain/native"));
+  // Only create-tauri-app's web side is kept: the native project is
+  // generated into .chain/native from chain-sdk's own templates (native.ts).
+  fs.rmSync(path.join(target, "src-tauri"), { recursive: true, force: true });
 
   console.log("\nWiring @chain/sdk, Tailwind CSS, react-router-dom, and chain-core...");
   const ctx = scaffoldContext(target, true);
   writeTrackedFiles(ctx);
+  prepareChainApp(target);
 
   console.log("\nInstalling dependencies (npm install)...");
   execFileSync("npm", ["install"], { cwd: target, stdio: "inherit" });
@@ -106,8 +106,8 @@ export async function init(projectName: string): Promise<void> {
   );
   console.log(`Next: cd ${target} && npm run dev`);
   console.log(
-    "Later, when chain-sdk's templates change, run `chain update` from inside this app to " +
-      "pick them up without losing your edits."
+    "`chain dev`/`chain build` keep .chain/native generated; when chain-sdk's app templates change, " +
+      "run `chain update` from inside this app to merge them without losing your edits."
   );
 
   if (!checkRustQuietly()) {

@@ -41,15 +41,15 @@ desirable, but it means `tauri.conf.json`'s
 build` infinitely. Both patches live in `scaffold.ts` and are applied
 together; don't change one without the other.
 
-`create-tauri-app` also always writes the native project to `src-tauri/`
-— `init` immediately renames that to the hidden `.chain/native/` (see
-below) before any tracked-file patching happens, so a developer scaffolding
-a new app never sees a `src-tauri` folder even transiently.
+`create-tauri-app` also writes a native project to `src-tauri/`; `init`
+deletes it — only create-tauri-app's web side is kept — and generates
+`.chain/native/` from chain-sdk's own templates instead (below), so a new
+app never depends on what `create-tauri-app@latest` happens to output.
 
 After writing every tracked file, `init` also snapshots them into
 `.chain/baseline/` inside the new app — this is what makes `chain update`
-possible later (see below). Commit `.chain/` to the app's own repo; it's
-not build output.
+possible later (see below). Commit `.chain/baseline/`; git ignores
+`.chain/native/` except its `Cargo.lock` (the rules `init`/`update` add).
 
 ### The hidden native project: `.chain/native`
 
@@ -59,11 +59,39 @@ directory `.chain/baseline/` already lives in. The reasoning (and the
 Tauri-CLI mechanism that makes it possible) is worth understanding before
 touching any of this:
 
+- **It's generated, like Next.js's `.next`** (mneme request 43).
+  `native.ts`'s `generateNativeProject` writes every file from chain-sdk's
+  templates plus package.json — `Cargo.toml` (`templates/native/Cargo.toml`;
+  chain-core from the same checkout `@chain/sdk`'s `file:` link points
+  at, else the published git rev), `tauri.conf.json` (`tauriConf`),
+  `build.rs`, `src/*.rs`, `capabilities/`, `.gitignore`, and icons (the
+  app's `asset/icons` when it has them). `prepareChainApp` runs it on
+  every `chain dev`, `chain build`, `chain clean` and `chain update`,
+  rewriting only files whose content differs (so Cargo only rebuilds
+  when something changed). A deleted folder comes back; a stale file
+  (newer templates, a moved checkout) or a broken one (bad TOML,
+  conflict markers) is overwritten. Nothing is merged, so nothing can
+  conflict. The same chain-sdk and package.json always give the same
+  project.
+- **The app's identity lives in package.json `"chain.app"`**: `name`
+  (productName) and `identifier`. `pinAppIdentity` writes them the first
+  time — from the existing native project's `tauri.conf.json` if there is
+  one, else `package.json`'s name and `dev.chain.<name>` — so the
+  identifier, which decides the app's data folder (`resolveDbPath`),
+  can't drift. The version is package.json's `version`; the crate name
+  comes from package.json's `name`, so the shared dev cache stays
+  incremental.
+- **Only `Cargo.lock` is the app's.** `ensureGitignore` replaces a
+  blanket `.chain/` rule with `/.chain/native/*` + `!/.chain/native/Cargo.lock`,
+  so the lock (pinned crate versions) and `.chain/baseline/` are
+  committed and everything generated isn't. Chain never touches the git
+  index: an app that already tracked its native files untracks them once
+  (`git rm -r --cached .chain/native && git add .chain/native/Cargo.lock`),
+  or every regenerated file shows as a diff.
 - `crates/core` holds the real native logic; a scaffolded app's own
-  `.chain/native/src/lib.rs` is just a thin generated wrapper `chain
-update` regenerates (see `templates/lib.rs`) — there's rarely a reason
-  for an app developer to open it, so it's hidden the way `node_modules`
-  is, not deleted or excluded from git.
+  `.chain/native/src/lib.rs` is a thin generated wrapper (see
+  `templates/lib.rs`) — there's no reason for an app developer to open
+  it, so it's hidden the way `node_modules` is.
 - This only works because `@tauri-apps/cli` (v2.0.4+) does **not**
   hardcode the `src-tauri` name: it fast-checks
   `$CWD/src-tauri/tauri.conf.json`, then falls back to a tree walk — and
@@ -76,7 +104,7 @@ update` regenerates (see `templates/lib.rs`) — there's rarely a reason
 - `.chain/native/` sits two levels under the app root (`.chain/native/`
   vs. the old one-level `src-tauri/`) — the only content difference this
   causes is `tauri.conf.json`'s `frontendDist`, which is `"../../dist"`
-  instead of `"../dist"` (`patchTauriConf` in `scaffold.ts`).
+  instead of `"../dist"` (`tauriConf` in `native.ts`).
   `beforeDevCommand`/`beforeBuildCommand` stay plain strings (`"npm run
 dev:web"`) unchanged — `npm run` itself walks up looking for the
   nearest `package.json` regardless of the cwd it's invoked from, so the
@@ -87,10 +115,10 @@ dev:web"`) unchanged — `npm run` itself walks up looking for the
   the enforcement mechanism, not just documentation, that keeps the
   native project effectively "chain-owned."
 - **Migrating an existing app** (one still on the old `src-tauri/`
-  layout): `chain update` does this automatically as a one-time step
-  before its normal tracked-file loop — see its section below. A plain
-  `fs.renameSync` (same filesystem) preserves the Cargo `target/` build
-  cache, so migrating doesn't trigger a full rebuild.
+  layout): `prepareChainApp` renames it to `.chain/native` once, before
+  generating — a plain `fs.renameSync` keeps its `target/` build cache
+  and `Cargo.lock`, and its identifier is pinned from its
+  `tauri.conf.json`.
 
 ### `chain dev` — run the dev server behind condensed, branded output
 
@@ -329,6 +357,18 @@ closing line: green `● Build finished` on success, or red
 e.g. Tauri's `Error failed to build app: Target x86_64-apple-darwin is
 not installed …` when a `--target` triple's Rust target is missing.
 
+**Updates and signing.** With package.json `"chain.updates"`, `chain
+build` also signs and publishes the app's update
+(`agent-docs/capabilities/updates/`): it needs `CHAIN_UPDATE_KEY` (the
+private key `chain updates key <file>` made, outside the app;
+`CHAIN_UPDATE_KEY_PASSWORD` if it has one), turns on Tauri's updater
+archive, and writes `<Name>_<version>_<arch>.app.tar.gz`, its `.sig` and
+`latest.json` to `.chain/native/target/updates/` — builds of one version
+for different `--target`s add up in one feed. `--notes <file>` puts
+release notes in the feed. Independently, `CHAIN_SIGNING_IDENTITY` signs
+the app with a keychain code-signing identity instead of ad-hoc, which
+is what keeps macOS permissions across updates.
+
 ### GPL opt-in — `package.json` "chain.gpl"
 
 `"chain": { "gpl": true }` makes `chain dev`/`chain build` add
@@ -441,16 +481,13 @@ whatever the developer built since `init`. `chain update` instead does a
 proper three-way merge, the same mechanism git itself uses for merge
 conflicts.
 
-**Before any of that**, `update()` runs a one-time migration: if
-`src-tauri/` exists and `.chain/native/` doesn't, it moves the whole
-directory with `fs.renameSync` (same filesystem — cheap, and it carries
-the Cargo `target/` build cache along instead of forcing a full rebuild),
-plus `.chain/baseline/src-tauri` → `.chain/baseline/.chain/native` if a
-baseline snapshot already exists. After that, the normal loop below runs
-against the new `.chain/native/...` paths exactly as it would for any
-other tracked-file change — a developer's own edits to, say,
-`tauri.conf.json`'s window size survive the merge the same way any other
-non-overlapping customization would.
+**The merge covers the app's side only.** `.chain/native` isn't merged:
+`update` deletes any old `.chain/baseline/.chain/native` (or
+`.chain/baseline/src-tauri`) snapshot, merges the app-side files below,
+then calls `prepareChainApp`, which regenerates the native project (see
+"The hidden native project"). It works with no `.chain/native` and no
+`.chain/baseline` at all — any package.json with a `"chain"` block or
+`@chain/cli` counts as a Chain app (`isChainApp`).
 
 - **baseline** = `.chain/baseline/<path>`, a snapshot of what the file
   looked like right after the last `init`/`update` — the merge ancestor.

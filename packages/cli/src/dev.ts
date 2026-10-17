@@ -14,7 +14,7 @@ import {
   type NativeOutputState
 } from "./nativeOutput.js";
 import {
-  checkChainApp,
+  prepareChainApp,
   resolveTauriBin,
   sharedDevTargetDir,
   taskkillPath,
@@ -24,7 +24,7 @@ import { syncPermissionsOrExit } from "./permissions.js";
 
 export async function dev(args: string[]): Promise<void> {
   const cwd = process.cwd();
-  checkChainApp(cwd);
+  prepareChainApp(cwd);
 
   const tauriBin = resolveTauriBin(cwd);
   if (!fs.existsSync(tauriBin)) {

@@ -6,17 +6,25 @@ import { largeCacheHint } from "./clean.js";
 import { chainCoreFeaturesOrExit } from "./features.js";
 import { ansi, freshState, makeColor, printFailureSummary, processLine } from "./nativeOutput.js";
 import {
-  checkChainApp,
+  prepareChainApp,
   nativeProjectDir,
   resolveTauriBin,
   taskkillPath,
   tauriEnv
 } from "./nativeProject.js";
 import { buildPermissionArgs, syncPermissionsOrExit } from "./permissions.js";
+import {
+  readUpdatesConfigOrExit,
+  signingEnvOrExit,
+  signingIdentityConfig,
+  takeNotesOrExit,
+  updaterBuildConfig,
+  writeUpdateFiles
+} from "./updates.js";
 
 export async function build(args: string[]): Promise<void> {
   const cwd = process.cwd();
-  checkChainApp(cwd);
+  prepareChainApp(cwd);
 
   const tauriBin = resolveTauriBin(cwd);
   if (!fs.existsSync(tauriBin)) {
@@ -27,13 +35,17 @@ export async function build(args: string[]): Promise<void> {
   const color = makeColor(Boolean(process.stdout.isTTY));
   console.log(color(ansi.bold + ansi.cyan, "⛓  chain build") + "\n");
 
+  const updates = readUpdatesConfigOrExit(cwd);
+  const notes = takeNotesOrExit(args);
+  const signingEnv = updates ? signingEnvOrExit() : {};
+  const updaterArgs = [...(updates ? updaterBuildConfig(updates) : []), ...signingIdentityConfig()];
   const permissionArgs = buildPermissionArgs(syncPermissionsOrExit(cwd));
   const features = chainCoreFeaturesOrExit(cwd);
   const featureArgs = features.length > 0 ? ["--features", features.join(",")] : [];
   const state = freshState();
-  const child = spawn(tauriBin, ["build", ...permissionArgs, ...featureArgs, ...args], {
+  const child = spawn(tauriBin, ["build", ...permissionArgs, ...updaterArgs, ...featureArgs, ...args], {
     cwd,
-    env: tauriEnv(cwd),
+    env: { ...tauriEnv(cwd), ...signingEnv },
     stdio: ["ignore", "pipe", "pipe"],
     // Leader of its own process group, so an aborted build (Ctrl+C) can
     // kill the whole cargo/rustc tree, not just this one pid — same
@@ -71,6 +83,16 @@ export async function build(args: string[]): Promise<void> {
   process.on("SIGTERM", () => killTree("SIGTERM"));
 
   const code: number = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
+  if (code === 0 && updates) {
+    try {
+      const written = writeUpdateFiles(cwd, updates, args, notes);
+      console.log(`\n${color(ansi.bold, "Update files")} (upload side by side, at the feed's address):`);
+      for (const file of written) console.log(`  ${file}`);
+    } catch (error) {
+      console.error(`\nError: the app built, but its update files couldn't be written: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
   if (code === 0) {
     console.log(`\n${color(ansi.green, "● Build finished")}`);
     const cacheHint = largeCacheHint(path.join(nativeProjectDir(cwd), "target"), "chain clean");

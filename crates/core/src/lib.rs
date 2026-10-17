@@ -32,5 +32,6 @@ mod sound;
 pub mod speech;
 pub mod storage;
 pub mod terminal;
+pub mod updates;
 pub mod vision;
 pub mod window;

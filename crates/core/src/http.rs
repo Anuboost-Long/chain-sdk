@@ -235,7 +235,8 @@ async fn send(request: HttpRequest) -> Result<(ResponseHead, reqwest::Response),
 }
 
 /// `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0` and `::`.
-fn is_loopback(url: &reqwest::Url) -> bool {
+/// localhost, `*.localhost`, 127/8, ::1, 0.0.0.0 and ::.
+pub fn is_loopback(url: &reqwest::Url) -> bool {
     let Some(host) = url.host_str() else { return false };
     match host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
         Ok(ip) => ip.is_loopback() || ip.is_unspecified(),

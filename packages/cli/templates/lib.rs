@@ -11,6 +11,7 @@ mod dev_inspector;
 mod folders;
 mod pdf;
 mod terminal;
+mod updates;
 mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -1466,9 +1467,12 @@ pub fn run() {
 
     let mut context = tauri::generate_context!();
     window::configure(&mut context).unwrap_or_else(|e| panic!("{e}"));
+    updates::configure(&mut context).unwrap_or_else(|e| panic!("{e}"));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(updates::plugin())
+        .manage(updates::UpdatesState::default())
         .manage(StorageState(Mutex::new(None)))
         .on_page_load(release_abandoned_work)
         .manage(FilesState(Mutex::new(None)))
@@ -1621,6 +1625,10 @@ pub fn run() {
             browser_view::browser_view_remove_script,
             browser_view::browser_view_reply,
             browser_view::browser_view_run_in_frames,
+            updates::updates_status,
+            updates::updates_check,
+            updates::updates_download,
+            updates::updates_install,
             window::window_availability,
             window::window_options,
             window::window_set_options,
@@ -1642,6 +1650,7 @@ pub fn run() {
             // Processes and terminal sessions run in their own process
             // groups, so nothing else stops them when the app quits.
             if let tauri::RunEvent::Exit = event {
+                updates::on_exit(app);
                 for handle in app.state::<ProcessRunnerState>().processes.lock().expect("process-runner mutex poisoned").values() {
                     handle.kill_now();
                 }
