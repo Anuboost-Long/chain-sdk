@@ -249,3 +249,83 @@ webView:navigationResponse:didBecomeDownload:
 webView:shouldGoToBackForwardListItem:willUseInstantBack:completionHandler:
 webView:willSubmitForm:submissionHandler:
 ```
+
+## Found while implementing (16–17 October 2026, macOS 27, live)
+
+- **A Tauri child webview in the app's window is a trap.** Tauri's
+  `Window::is_webview_window()` is "every webview's label equals the
+  window's", so one child makes `get_webview_window("main")` return
+  None, drag-drop events change target, and `WebviewWindow` command
+  arguments fail. Views are plain `WKWebView`s Chain adds above the
+  page instead — which also keeps wry's IPC handler and Tauri's init
+  scripts out of other sites (a page in a view sees no
+  `__TAURI_INTERNALS__`, `ipc` or `webkit.messageHandlers.ipc`).
+- **wry's UI delegate grants media capture** (`WKPermissionDecision::Grant`)
+  — another reason not to reuse wry's delegates for other sites.
+- **A server redirect repeats its navigation's `navigationType`** (a
+  302 after a link click is `linkActivated` again), so the type can't
+  tell a redirect from a new attempt. `WKNavigationAction._isRedirect`
+  (unpublished, present on macOS 27) can.
+- **`WKNavigationAction.buttonNumber`** is 1 for a primary click and 0
+  when no click started the navigation (seen); 2/4 for secondary/middle
+  come from WebKit's `toNSButtonMask`, not yet observed.
+  `modifierFlags` carries Command on a Cmd-click (seen).
+- **`webView.URL`** changes when a load starts (provisional), and goes
+  back to the shown page when the load fails. The failing address is in
+  the error's `NSErrorFailingURLKey` (an `NSURL`); the string key is absent.
+- **After the page process dies**, `webView.URL` is nil and `reload`
+  does nothing — reloading means loading the last known address.
+  `_killWebContentProcess` doesn't call `webViewWebContentProcessDidTerminate:`
+  (a client-requested end); a real `SIGKILL` of the WebContent pid does.
+- **getUserMedia / geolocation wait while the page is hidden** (window
+  behind others: `visibilityState` "hidden"), then reach the delegate.
+  With the UI delegate denying: `NotAllowedError`, geolocation code 1,
+  no system prompt, no tccd activity.
+- **`elementFullscreenEnabled` off → `document.fullscreenEnabled` is
+  undefined**, not false.
+- **Context menu**: items carry identifiers whose values are their names
+  (`WKMenuItemIdentifierOpenLinkInNewWindow`, `…DownloadLinkedFile`,
+  `…CopyLink`, `…ShareMenu`, `…GoBack`, `…Reload`). The symbols aren't
+  reachable through `dlsym(RTLD_DEFAULT, …)`. Without private delegate
+  methods, "Open Link in New Window" and "Download Linked File" call no
+  delegate at all — dead items, removed in `willOpenMenu:withEvent:`.
+  The menu's Back and `reload:` go through `decidePolicyForNavigationAction`
+  (types 2 and 3).
+
+## Rules and scripts (request 21), found live 17 October 2026
+
+- **Content rule lists**: `compileContentRuleListForIdentifier:` reports
+  a bad pattern as `WKErrorDomain` 6 with a generic description; the
+  compiler's reason ("Rule list compilation failed: Invalid or
+  unsupported regular expression.") is in `userInfo["NSHelpAnchor"]`,
+  and no rule index. `removeContentRuleListForIdentifier:completionHandler:`
+  crashes (SIGSEGV in WebKit) with a nil handler. A blocked page
+  document fails with `WebKitErrorDomain` 104 "The URL was blocked by a
+  content blocker". `if-domain` matches the top-level page, so it
+  covers a cross-origin frame's subresources too. Compile time grows
+  with pattern complexity (60k `^https?://[a-z0-9.-]*…[?&]id=[0-9]+`
+  rules ≈ 10 s); `lookUpContentRuleListForIdentifier:` finds a compiled
+  list across app launches. `fetch`, `websocket`, `ping` and `other`
+  resource types compile on macOS 27.
+- **User scripts** at document start in `WKContentWorld.pageWorld` run
+  before the page's own scripts and ignore its CSP. A
+  `WKScriptMessageHandlerWithReply` registered in the page world gives
+  `postMessage` a Promise; the reply block takes (result, error string).
+- **Frames**: no public way to list them; a user script in a named
+  world posting at document start (all frames) yields each frame's
+  `WKFrameInfo`, usable with `callAsyncJavaScript…inFrame:` (cross-origin
+  included). A removed frame then fails with `WKErrorJavaScriptInvalidFrameTarget`
+  (12), whose userInfo still has a `WKJavaScriptExceptionMessage`.
+- **User gesture**: `callAsyncJavaScript` counts as one
+  (`navigator.userActivation.isActive` true, `requestPictureInPicture()`
+  allowed); it lapses like a click's.
+- **Picture-in-picture** in a `WKWebView` on macOS needs
+  `WKPreferences._setAllowsPictureInPictureMediaPlayback:` — the public
+  `allowsPictureInPictureMediaPlayback` is iOS-only. Without it, every
+  video (file or canvas stream) fails `NotSupportedError`.
+- **A failed compile leaves a temp file behind** in the app's
+  `~/Library/WebKit/<bundle>/ContentRuleLists/` (`ContentRuleListXXXXXX`,
+  ~125–185 bytes each; seen after the invalid-regex tests). They don't
+  carry Chain's `chain-view-` prefix, so Chain's own cleanup doesn't
+  touch them. Harmless and small, but they accumulate with every
+  rejected list.

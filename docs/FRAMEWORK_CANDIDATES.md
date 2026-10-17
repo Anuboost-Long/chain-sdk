@@ -408,6 +408,31 @@ never run — checklist in research/WINDOWS.md
 Possible package:
 `@chain/sdk` (bundled in core)
 
+
+## BrowserView
+
+Used by:
+lazify (request 18 — its in-app browser tabs and the agent's dev-server
+preview, each on its own named session; request 21 — its ad/tracker
+blocker and media picture-in-picture on those views)
+
+Generalizable:
+Yes — any app that shows third-party web content inside its own layout
+(tabs, previews, docs panes) under app-decided navigation policy
+
+Contract:
+Draft (`agent-docs/capabilities/browser-view/CONTRACT.md`, `capabilities/browser-view/contract.ts`)
+
+macOS:
+Implemented natively in Chain Core: a `WKWebView` subclass above the
+app's page with Chain's own navigation/UI delegates, macOS 14+;
+verified in the playground (see CAPABILITY_MATRIX.md)
+
+Windows:
+Not started — WebView2 `CoreWebView2Controller` with deferrals (AGENTS.md)
+
+Possible package:
+`@chain/sdk` (bundled in core)
 ## Embeddings
 
 Used by:

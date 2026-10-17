@@ -7,6 +7,7 @@ pub mod agent_server;
 pub mod attention;
 pub mod audio_recorder;
 pub mod browser;
+pub mod browser_view;
 pub mod dev_launch;
 pub mod dev_trace;
 pub mod embeddings;

@@ -1,0 +1,16 @@
+{
+  "name": "browser-view",
+  "description": "Other websites shown inside the app's own window: embedded views the app places and sizes, each with its own history on a named persistent session, with navigation and new windows decided by the app.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/browser-view/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

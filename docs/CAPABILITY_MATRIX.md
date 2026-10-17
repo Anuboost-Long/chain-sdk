@@ -26,6 +26,7 @@ to see what actually exists vs. what's just planned.
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
+| BrowserView     | 🧪    | ⏳      | ⏳    | Draft    |
 | Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
 | Window          | 🧪    | ⚠       | ⚠     | Draft    |
 | Pdf             | 🧪    | ⏳      | ⏳    | Draft    |
@@ -245,6 +246,24 @@ popup messaging its opener and closing itself, app button presses (and a
 forged press from the page refused), sign out open and closed. Windows is
 ⚠: the same Tauri code compiles for it but has never run there
 (`agent-docs/capabilities/browser/research/WINDOWS.md` has the checklist).
+
+`browser-view` (lazify request 18 — other sites embedded in the app's own
+window, on named persistent sessions, with navigation and new windows
+decided by the app) is verified on macOS 27 in `apps/playground`'s dev
+build against a local two-origin test site and a person clicking:
+placement under page zoom, held/allowed/refused/timed-out navigations,
+redirects asked once, nested-frame top navigation, new windows (including
+open-then-address-later), load-failure reasons, crash and reload, session
+sharing and isolation, permissions refused without a prompt, real-input
+modifiers/button/input age, and the pruned context menu. Not yet seen:
+a trackpad swipe, element fullscreen, Inspect Element. Windows is not
+started (`agent-docs/capabilities/browser-view/AGENTS.md`).
+Request 21 added per-session rules (content-blocker style: block, hide,
+exceptions — verified in cross-origin frames, with the compiled cache
+surviving relaunch), early page scripts with an `ask()` channel back to
+the app, and `runInFrames()` (every frame, cross-origin included, as a
+user gesture — picture-in-picture verified, behind the opt-in
+`allowPictureInPicture`, which uses an unpublished WebKit preference).
 
 `embeddings` (request 37 — sentence vectors for search by meaning, from a
 downloaded ONNX model and its Hugging Face tokenizer, on the ONNX Runtime

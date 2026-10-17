@@ -238,6 +238,11 @@ export const TRACKED_FILES: TrackedFile[] = [
   { relPath: ".chain/native/src/lib.rs", kind: "template", templateName: "lib.rs" },
   { relPath: ".chain/native/build.rs", kind: "template", templateName: "build.rs" },
   { relPath: ".chain/native/src/browser.rs", kind: "template", templateName: "browser.rs" },
+  {
+    relPath: ".chain/native/src/browser_view.rs",
+    kind: "template",
+    templateName: "browser_view.rs"
+  },
   { relPath: ".chain/native/src/window.rs", kind: "template", templateName: "window.rs" },
   { relPath: ".chain/native/src/pdf.rs", kind: "template", templateName: "pdf.rs" },
   { relPath: ".chain/native/src/folders.rs", kind: "template", templateName: "folders.rs" },

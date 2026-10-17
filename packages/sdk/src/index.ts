@@ -2,6 +2,7 @@ import { agentServer } from "./agent-server";
 import { attention } from "./attention";
 import { audioRecorder } from "./audio-recorder";
 import { browser } from "./browser";
+import { browserView } from "./browser-view";
 import { embeddings } from "./embeddings";
 import { files } from "./files";
 import { folders } from "./folders";
@@ -46,6 +47,7 @@ export const desktop = {
   tts,
   audioRecorder,
   browser,
+  browserView,
   embeddings,
   window: appWindow,
   pdf,
@@ -207,6 +209,33 @@ export type {
   BrowserSessionOptions,
   BrowserUnsubscribe
 } from "./contracts/browser";
+export type {
+  BrowserViewApi,
+  BrowserViewAvailability,
+  BrowserViewBounds,
+  BrowserViewCrash,
+  BrowserViewCreateOptions,
+  BrowserViewFrame,
+  BrowserViewFrameResult,
+  BrowserViewInitiator,
+  BrowserViewLoadFailure,
+  BrowserViewLoadFailureReason,
+  BrowserViewMessage,
+  BrowserViewModifiers,
+  BrowserViewMouseButton,
+  BrowserViewNavigationKind,
+  BrowserViewNavigationRequest,
+  BrowserViewNewWindow,
+  BrowserViewResourceType,
+  BrowserViewRule,
+  BrowserViewRuleAction,
+  BrowserViewRuleList,
+  BrowserViewRuleTrigger,
+  BrowserViewScript,
+  BrowserViewState,
+  BrowserViewUnsubscribe,
+  BrowserViewWindowFeatures
+} from "./contracts/browser-view";
 export type {
   EmbeddingsApi,
   EmbeddingsAvailability,

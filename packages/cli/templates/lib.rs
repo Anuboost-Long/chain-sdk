@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager};
 
 mod attention;
 mod browser;
+mod browser_view;
 mod dev_inspector;
 mod folders;
 mod pdf;
@@ -106,6 +107,7 @@ fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::Pa
     if payload.event() == tauri::webview::PageLoadEvent::Started {
         chain_core::audio_recorder::cancel();
         folders::release_page(webview);
+        browser_view::release_page(webview);
     }
 }
 
@@ -1476,6 +1478,7 @@ pub fn run() {
         .manage(PackagesState::default())
         .manage(browser::BrowserState::default())
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
+        .manage(browser_view::BrowserViewState::default())
         .manage(window::WindowState::default())
         .manage(folders::FoldersState::default())
         .manage(terminal::TerminalState::default())
@@ -1485,11 +1488,13 @@ pub fn run() {
             window::on_window_event(window, event);
             folders::on_window_event(window, event);
             attention::on_window_event(window, event);
+            browser_view::on_window_event(window, event);
         })
         .manage(pdf::PdfState::default())
         .setup(|_app| {
             window::setup(_app)?;
             attention::setup(_app);
+            browser_view::setup(_app);
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
             dev_inspector::start(_app.handle().clone());
@@ -1599,6 +1604,23 @@ pub fn run() {
             browser::browser_read,
             browser::browser_fetch,
             browser::browser_clear_session,
+            browser_view::browser_view_availability,
+            browser_view::browser_view_create,
+            browser_view::browser_view_close,
+            browser_view::browser_view_set_bounds,
+            browser_view::browser_view_set_visible,
+            browser_view::browser_view_load,
+            browser_view::browser_view_go,
+            browser_view::browser_view_reload,
+            browser_view::browser_view_stop,
+            browser_view::browser_view_state,
+            browser_view::browser_view_answer,
+            browser_view::browser_view_set_rules,
+            browser_view::browser_view_remove_rules,
+            browser_view::browser_view_set_script,
+            browser_view::browser_view_remove_script,
+            browser_view::browser_view_reply,
+            browser_view::browser_view_run_in_frames,
             window::window_availability,
             window::window_options,
             window::window_set_options,

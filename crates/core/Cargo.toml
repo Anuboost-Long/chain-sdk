@@ -93,12 +93,14 @@ objc2-speech = "0.3"
 objc2-avf-audio = "0.3"
 block2 = "0.6"
 # files::open/reveal: NSWorkspace; browser: the window's title bar height;
-# window: the title bar, its buttons and their placement.
+# window: the title bar, its buttons and their placement; browser_view:
+# input inside a view, its context menu, and a page's file-upload panel.
 # Same version Tauri already builds, so nothing new ships.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSResponder", "NSView", "NSWindow", "NSControl", "NSButton"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSWorkspace", "NSResponder", "NSView", "NSWindow", "NSControl", "NSButton", "NSEvent", "NSPanel", "NSSavePanel", "NSOpenPanel", "NSApplication", "NSGraphics", "NSMenu", "NSMenuItem", "NSUserInterfaceItemIdentification"] }
 # browser: clearing a session's WKWebsiteDataStore, the page's
-# back/forward state, and closing popups that call window.close(). Same version wry already builds.
-objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "WKNavigation", "WKUIDelegate"] }
+# back/forward state, and closing popups that call window.close();
+# browser_view: its own navigation/UI delegates, rules and page scripts. Same version wry already builds.
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "WKNavigation", "WKUIDelegate", "WKNavigationDelegate", "WKNavigationAction", "WKFrameInfo", "WKWindowFeatures", "WKPreferences", "WKSecurityOrigin", "WKOpenPanelParameters", "WKContentRuleList", "WKContentRuleListStore", "WKContentWorld", "WKScriptMessage", "WKScriptMessageHandler", "WKScriptMessageHandlerWithReply", "WKUserContentController", "WKUserScript", "WKError"] }
 
 # dev_launch: posix_spawn + dlsym for relaunching a `chain dev` binary
 # responsible for its own permission prompts; process_tree: signalling a
