@@ -4,6 +4,8 @@
 //! Tauri's own window calls (theme, background colour, decorations,
 //! dragging, full screen) are made by the app template's window.rs.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +93,147 @@ pub struct ButtonsOptions {
     pub position: Option<Option<ButtonsPosition>>,
 }
 
+/// `ShowWhen` in contract.ts: when the window first appears at launch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShowWhen {
+    #[default]
+    Immediately,
+    FirstPaint,
+    ShowCalled,
+}
+
+impl ShowWhen {
+    pub fn supported(self) -> bool {
+        cfg!(target_os = "macos") || self == Self::Immediately
+    }
+}
+
+/// package.json's keys that only apply at startup, so setOptions() refuses them.
+const STARTUP_KEYS: [&str; 6] = ["showWhen", "showTimeout", "size", "minSize", "title", "tabFocus"];
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupKeys {
+    show_when: Option<ShowWhen>,
+    show_timeout: Option<f64>,
+    size: Option<Size>,
+    min_size: Option<Size>,
+    title: Option<String>,
+    tab_focus: Option<TabFocus>,
+}
+
+fn startup_keys(text: &str) -> Result<StartupKeys, InvalidOptions> {
+    let Some(window) = package_window_options(text)? else { return Ok(StartupKeys::default()) };
+    serde_json::from_value(window).map_err(|e| in_package(InvalidOptions(e.to_string())))
+}
+
+/// `WindowSize` in contract.ts: logical pixels, the page's area.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// `TabFocus` in contract.ts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabFocus {
+    All,
+    #[default]
+    System,
+}
+
+/// How the window opens: `size`, `minSize`, `title` and `tabFocus` from
+/// package.json. None = the native project's own.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Launch {
+    pub size: Option<Size>,
+    pub min_size: Option<Size>,
+    pub title: Option<String>,
+    pub tab_focus: TabFocus,
+}
+
+impl Launch {
+    pub fn from_package_json(text: &str) -> Result<Self, InvalidOptions> {
+        let keys = startup_keys(text)?;
+        for (name, size) in [("size", keys.size), ("minSize", keys.min_size)] {
+            let Some(size) = size else { continue };
+            if !(size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0) {
+                return Err(in_package(InvalidOptions(format!(
+                    "{name} must have a positive width and height in pixels, got {}×{}",
+                    size.width, size.height
+                ))));
+            }
+        }
+        if let (Some(size), Some(min)) = (keys.size, keys.min_size) {
+            if size.width < min.width || size.height < min.height {
+                return Err(in_package(InvalidOptions(format!(
+                    "size {}×{} is smaller than minSize {}×{}",
+                    size.width, size.height, min.width, min.height
+                ))));
+            }
+        }
+        Ok(Self { size: keys.size, min_size: keys.min_size, title: keys.title, tab_focus: keys.tab_focus.unwrap_or_default() })
+    }
+}
+
+/// When the window first appears: `showWhen` and `showTimeout` from package.json.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FirstShow {
+    pub when: ShowWhen,
+    pub timeout: Duration,
+}
+
+impl Default for FirstShow {
+    fn default() -> Self {
+        Self { when: ShowWhen::Immediately, timeout: Duration::from_millis(3000) }
+    }
+}
+
+impl FirstShow {
+    pub fn from_package_json(text: &str) -> Result<Self, InvalidOptions> {
+        let mut first_show = Self::default();
+        let keys = startup_keys(text)?;
+        if let Some(when) = keys.show_when {
+            first_show.when = when;
+        }
+        if let Some(millis) = keys.show_timeout {
+            if !millis.is_finite() || millis < 0.0 {
+                return Err(in_package(InvalidOptions(format!(
+                    "showTimeout must be a non-negative number of milliseconds, got {millis}"
+                ))));
+            }
+            first_show.timeout = Duration::from_secs_f64(millis / 1000.0);
+        }
+        Ok(first_show)
+    }
+
+    /// The mode this platform actually does.
+    pub fn effective_when(&self) -> ShowWhen {
+        if self.when.supported() {
+            self.when
+        } else {
+            ShowWhen::Immediately
+        }
+    }
+}
+
+fn in_package(e: InvalidOptions) -> InvalidOptions {
+    InvalidOptions(format!("package.json \"chain.window\": {}", e.0))
+}
+
+/// package.json's `"chain": { "window": ... }`, if there is one.
+fn package_window_options(text: &str) -> Result<Option<serde_json::Value>, InvalidOptions> {
+    let package: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| in_package(InvalidOptions(e.to_string())))?;
+    match package.get("chain").and_then(|chain| chain.get("window")) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(window) => Ok(Some(window.clone())),
+    }
+}
+
 pub type Rgba = [u8; 4];
 
 /// A window's chrome as asked for, defaults included.
@@ -162,13 +305,12 @@ impl Chrome {
     /// The `"chain": { "window": ... }` part of the app's package.json,
     /// over the defaults.
     pub fn from_package_json(text: &str) -> Result<Self, InvalidOptions> {
-        let in_package = |e: InvalidOptions| InvalidOptions(format!("package.json \"chain.window\": {}", e.0));
-        let package: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| in_package(InvalidOptions(e.to_string())))?;
         let mut chrome = Self::default();
-        match package.get("chain").and_then(|chain| chain.get("window")) {
-            None | Some(serde_json::Value::Null) => {}
-            Some(window) => chrome.merge(window.clone()).map_err(in_package)?,
+        if let Some(mut window) = package_window_options(text)? {
+            if let Some(keys) = window.as_object_mut() {
+                STARTUP_KEYS.iter().for_each(|key| _ = keys.remove(*key));
+            }
+            chrome.merge(window).map_err(in_package)?;
         }
         Ok(chrome)
     }
@@ -176,6 +318,11 @@ impl Chrome {
     /// Applies a `WindowOptions` JSON value — all of it, or none of it
     /// when anything in it is invalid.
     pub fn merge(&mut self, options: serde_json::Value) -> Result<(), InvalidOptions> {
+        if let Some(key) = STARTUP_KEYS.iter().find(|key| options.get(**key).is_some()) {
+            return Err(InvalidOptions(format!(
+                "{key} only applies at startup — set it in package.json \"chain.window\""
+            )));
+        }
         let options: WindowOptions = serde_json::from_value(options).map_err(|e| InvalidOptions(e.to_string()))?;
         let background_color = match &options.background_color {
             Some(Some(text)) => Some(Some(parse_color(text)?)),
@@ -307,6 +454,14 @@ pub struct Insets {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShowWhenModes {
+    immediately: bool,
+    first_paint: bool,
+    show_called: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TitleBarStyles {
     standard: bool,
     transparent: bool,
@@ -330,6 +485,7 @@ pub struct Availability {
     start_drag: bool,
     title_bar_insets: bool,
     full_screen: bool,
+    show_when: ShowWhenModes,
 }
 
 pub fn availability() -> Availability {
@@ -352,11 +508,16 @@ pub fn availability() -> Availability {
         start_drag: true,
         title_bar_insets: mac,
         full_screen: true,
+        show_when: ShowWhenModes {
+            immediately: true,
+            first_paint: ShowWhen::FirstPaint.supported(),
+            show_called: ShowWhen::ShowCalled.supported(),
+        },
     }
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{apply, insets, page_draws_background, set_drag_regions, title_bar_double_click};
+pub use macos::{apply, insets, page_draws_background, set_drag_regions, set_tab_focuses_all, set_undrawn, title_bar_double_click};
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -455,6 +616,19 @@ mod macos {
         }
     }
 
+    /// Keeps the window on screen, key and in its place, but undrawn and
+    /// letting clicks through — so the app launches as usual and WebKit
+    /// keeps rendering the page (it stops for an ordered-out window).
+    /// Main thread.
+    pub fn set_undrawn(ns_window: *mut std::ffi::c_void, undrawn: bool) {
+        let Some(window) = window(ns_window) else { return };
+        let alpha: f64 = if undrawn { 0.0 } else { 1.0 };
+        // SAFETY: -[NSWindow setAlphaValue:] takes a CGFloat (f64 here);
+        // objc2-app-kit only binds it behind a feature chain-core doesn't use.
+        let _: () = unsafe { msg_send![&*window, setAlphaValue: alpha] };
+        window.setIgnoresMouseEvents(undrawn);
+    }
+
     /// Whether the page's WKWebView paints its own default background
     /// (white, or dark grey in dark mode) behind the page. Off while the
     /// app sets a window background colour, so that colour shows before
@@ -467,6 +641,23 @@ mod macos {
         let Some(webview) = (unsafe { Retained::retain(webview.cast::<AnyObject>()) }) else { return };
         let value = NSNumber::new_bool(draws);
         let _: () = unsafe { msg_send![&*webview, setValue: &*value, forKey: ns_string!("drawsBackground")] };
+    }
+
+    /// Whether Tab moves focus to every focusable element in the page, not
+    /// just what macOS's Keyboard navigation setting allows. It's WebKit's
+    /// `tabFocusesLinks`, which takes buttons and other controls along with
+    /// links (WebCore's `EventHandler::tabsToAllFormControls`). Kept across
+    /// reloads. Main thread, from `with_webview`.
+    pub fn set_tab_focuses_all(webview: *mut std::ffi::c_void, all: bool) {
+        // SAFETY: Tauri's PlatformWebview::inner(), the WKWebView, valid
+        // for the with_webview callback this runs in. The configuration is
+        // a copy, but its preferences are the webview's own.
+        let Some(webview) = (unsafe { Retained::retain(webview.cast::<AnyObject>()) }) else { return };
+        unsafe {
+            let configuration: Retained<AnyObject> = msg_send![&*webview, configuration];
+            let preferences: Retained<AnyObject> = msg_send![&*configuration, preferences];
+            let _: () = msg_send![&*preferences, setTabFocusesLinks: all];
+        }
     }
 
     extern "C" {
@@ -593,6 +784,88 @@ mod tests {
             assert!(chrome.merge(options.clone()).is_err(), "{options}");
             assert_eq!(chrome, Chrome::default(), "{options}");
         }
+    }
+
+    #[test]
+    fn first_show_reads_its_keys_and_leaves_the_chrome_alone() {
+        let package = r#"{ "chain": { "window": { "titleBarStyle": "overlay", "showWhen": "firstPaint", "showTimeout": 1500 } } }"#;
+        let first_show = FirstShow::from_package_json(package).unwrap();
+        assert_eq!(first_show, FirstShow { when: ShowWhen::FirstPaint, timeout: Duration::from_millis(1500) });
+        assert_eq!(Chrome::from_package_json(package).unwrap().style, TitleBarStyle::Overlay);
+        assert_eq!(FirstShow::from_package_json(r#"{ "name": "app" }"#).unwrap(), FirstShow::default());
+        let nulls = r#"{ "chain": { "window": { "showWhen": null, "showTimeout": null } } }"#;
+        assert_eq!(FirstShow::from_package_json(nulls).unwrap(), FirstShow::default());
+        assert_eq!(FirstShow::default().timeout, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn invalid_first_show_options_name_the_key() {
+        for (package, key) in [
+            (r#"{ "chain": { "window": { "showWhen": "later" } } }"#, "later"),
+            (r#"{ "chain": { "window": { "showTimeout": -1 } } }"#, "showTimeout"),
+            (r#"{ "chain": { "window": { "showTimeout": "3s" } } }"#, "3s"),
+        ] {
+            let error = FirstShow::from_package_json(package).unwrap_err();
+            assert!(error.0.starts_with("package.json \"chain.window\": ") && error.0.contains(key), "{}", error.0);
+        }
+    }
+
+    #[test]
+    fn set_options_refuses_startup_keys() {
+        let mut chrome = Chrome::default();
+        let error = chrome.merge(json!({ "titleBarStyle": "overlay", "showWhen": "firstPaint" })).unwrap_err();
+        assert!(error.0.contains("showWhen") && error.0.contains("package.json"), "{}", error.0);
+        assert!(chrome.merge(json!({ "showTimeout": 10 })).is_err());
+        assert_eq!(chrome, Chrome::default());
+    }
+
+    #[test]
+    fn launch_reads_its_keys_and_leaves_the_rest_alone() {
+        let package = r#"{ "chain": { "window": { "titleBarStyle": "overlay", "showWhen": "firstPaint",
+            "size": { "width": 1440, "height": 920 }, "minSize": { "width": 1180, "height": 760 },
+            "title": "Lazify", "tabFocus": "all" } } }"#;
+        let launch = Launch::from_package_json(package).unwrap();
+        assert_eq!(launch.size, Some(Size { width: 1440.0, height: 920.0 }));
+        assert_eq!(launch.min_size, Some(Size { width: 1180.0, height: 760.0 }));
+        assert_eq!(launch.title.as_deref(), Some("Lazify"));
+        assert_eq!(launch.tab_focus, TabFocus::All);
+        assert_eq!(Chrome::from_package_json(package).unwrap().style, TitleBarStyle::Overlay);
+        assert_eq!(FirstShow::from_package_json(package).unwrap().when, ShowWhen::FirstPaint);
+        assert_eq!(Launch::from_package_json(r#"{ "name": "app" }"#).unwrap(), Launch::default());
+        let nulls = r#"{ "chain": { "window": { "size": null, "minSize": null, "title": null, "tabFocus": null } } }"#;
+        assert_eq!(Launch::from_package_json(nulls).unwrap(), Launch::default());
+    }
+
+    #[test]
+    fn invalid_launch_options_name_the_key() {
+        for (package, key) in [
+            (r#"{ "chain": { "window": { "size": { "width": 0, "height": 600 } } } }"#, "size"),
+            (r#"{ "chain": { "window": { "minSize": { "width": 800, "height": -1 } } } }"#, "minSize"),
+            (r#"{ "chain": { "window": { "size": { "width": 800 } } } }"#, "height"),
+            (r#"{ "chain": { "window": { "size": { "width": 800, "height": 600, "x": 0 } } } }"#, "x"),
+            (r#"{ "chain": { "window": { "size": { "width": 800, "height": 600 }, "minSize": { "width": 900, "height": 600 } } } }"#, "minSize"),
+            (r#"{ "chain": { "window": { "tabFocus": "links" } } }"#, "links"),
+            (r#"{ "chain": { "window": { "title": 3 } } }"#, "3"),
+        ] {
+            let error = Launch::from_package_json(package).unwrap_err();
+            assert!(error.0.starts_with("package.json \"chain.window\": ") && error.0.contains(key), "{}", error.0);
+        }
+    }
+
+    #[test]
+    fn set_options_refuses_launch_keys() {
+        let mut chrome = Chrome::default();
+        for key in ["size", "minSize", "title", "tabFocus"] {
+            let error = chrome.merge(json!({ key: null })).unwrap_err();
+            assert!(error.0.contains(key) && error.0.contains("package.json"), "{}", error.0);
+        }
+    }
+
+    #[test]
+    fn first_show_falls_back_where_unsupported() {
+        let first_paint = FirstShow { when: ShowWhen::FirstPaint, ..FirstShow::default() };
+        let expected = if cfg!(target_os = "macos") { ShowWhen::FirstPaint } else { ShowWhen::Immediately };
+        assert_eq!(first_paint.effective_when(), expected);
     }
 
     #[test]

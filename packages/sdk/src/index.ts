@@ -1,15 +1,26 @@
 import { agentServer } from "./agent-server";
+import { attention } from "./attention";
 import { audioRecorder } from "./audio-recorder";
 import { browser } from "./browser";
+import { browserView } from "./browser-view";
 import { embeddings } from "./embeddings";
 import { files } from "./files";
+import { folders } from "./folders";
 import { http } from "./http";
+import { keepAwake } from "./keep-awake";
 import { models } from "./models";
+import { packages } from "./packages";
+import { pageZoom } from "./page-zoom";
+import { pdf } from "./pdf";
 import { platform } from "./platform";
+import { ports } from "./ports";
 import { processRunner } from "./process-runner";
+import { share } from "./share";
 import { speech } from "./speech";
 import { storage } from "./storage";
+import { terminal } from "./terminal";
 import { tts } from "./tts";
+import { updates } from "./updates";
 import { vision } from "./vision";
 import { appWindow } from "./window";
 
@@ -21,23 +32,52 @@ export const desktop = {
   platform,
   storage,
   files,
+  folders,
   http,
   agentServer,
   processRunner,
+  terminal,
+  ports,
+  attention,
+  pageZoom,
+  keepAwake,
   vision,
   speech,
   models,
+  packages,
   tts,
   audioRecorder,
   browser,
+  browserView,
   embeddings,
-  window: appWindow
+  window: appWindow,
+  pdf,
+  share,
+  updates
 };
 
 export { sql } from "./storage-table";
+export type {
+  AvailableUpdate,
+  UpdateProgress,
+  UpdatesApi,
+  UpdatesStatus,
+  UpdatesUnsubscribe,
+  UpdatesUnsupportedReason
+} from "./contracts/updates";
 
 export type { ChainError, ChainErrorCode } from "./errors";
 export type { PlatformInfo, ChainOs, ChainArch } from "./contracts/platform";
+export type { PortsApi } from "./contracts/ports";
+export type {
+  AttentionApi,
+  AttentionUnsubscribe,
+  NotificationPermission,
+  NotifyOptions,
+  NotifyResult
+} from "./contracts/attention";
+export type { PageZoomApi } from "./contracts/page-zoom";
+export type { KeepAwakeApi, KeepAwakeOptions, KeepAwakeStatus } from "./contracts/keep-awake";
 export type {
   StorageApi,
   StorageScope,
@@ -53,6 +93,26 @@ export type {
   Target
 } from "./contracts/storage";
 export type { FilesApi, PickOptions, PickedFile, SaveOptions, SavedFile } from "./contracts/files";
+export type {
+  FoldersApi,
+  FolderGrant,
+  FolderAccess,
+  FolderGrantSource,
+  AppFolderKind,
+  PickFoldersOptions,
+  FolderEntry,
+  FolderEntryKind,
+  ListOptions,
+  ReadTextOptions,
+  ReadBytesOptions,
+  DeleteOptions,
+  WatchOptions,
+  FolderChange,
+  FolderChangeKind,
+  FolderChangeHandler,
+  FolderWatch,
+  FoldersUnsubscribe
+} from "./contracts/folders";
 export type {
   HttpApi,
   HttpResponse,
@@ -73,11 +133,24 @@ export type {
   ProcessRunnerApi,
   ProcessArg,
   ProcessHandle,
+  ProcessByteChunk,
+  ProcessByteHandler,
   ProcessOutputChunk,
   ProcessOutputHandler,
   ProcessRunOptions,
   ProcessExit
 } from "./contracts/process-runner";
+export type {
+  TerminalApi,
+  StartTerminalOptions,
+  TerminalSession,
+  TerminalExit,
+  TerminalOutput,
+  TerminalBacklog,
+  TerminalOutputHandler,
+  TerminalExitHandler,
+  TerminalUnsubscribe
+} from "./contracts/terminal";
 export type {
   VisionApi,
   RecognizeTextOptions,
@@ -105,6 +178,12 @@ export type {
   InstalledModel,
   ModelInstallProgress
 } from "./contracts/models";
+export type {
+  PackagesApi,
+  PackageManifest,
+  InstalledPackage,
+  PackageInstallProgress
+} from "./contracts/packages";
 export type {
   TtsApi,
   TtsModelConfig,
@@ -141,6 +220,33 @@ export type {
   BrowserUnsubscribe
 } from "./contracts/browser";
 export type {
+  BrowserViewApi,
+  BrowserViewAvailability,
+  BrowserViewBounds,
+  BrowserViewCrash,
+  BrowserViewCreateOptions,
+  BrowserViewFrame,
+  BrowserViewFrameResult,
+  BrowserViewInitiator,
+  BrowserViewLoadFailure,
+  BrowserViewLoadFailureReason,
+  BrowserViewMessage,
+  BrowserViewModifiers,
+  BrowserViewMouseButton,
+  BrowserViewNavigationKind,
+  BrowserViewNavigationRequest,
+  BrowserViewNewWindow,
+  BrowserViewResourceType,
+  BrowserViewRule,
+  BrowserViewRuleAction,
+  BrowserViewRuleList,
+  BrowserViewRuleTrigger,
+  BrowserViewScript,
+  BrowserViewState,
+  BrowserViewUnsubscribe,
+  BrowserViewWindowFeatures
+} from "./contracts/browser-view";
+export type {
   EmbeddingsApi,
   EmbeddingsAvailability,
   EmbeddingModel,
@@ -157,6 +263,10 @@ export type {
   WindowApi,
   WindowAvailability,
   WindowOptions,
+  WindowStartupOptions,
+  ShowWhen,
+  WindowSize,
+  TabFocus,
   WindowButtonsOptions,
   WindowButtonsPosition,
   WindowAppearance,
@@ -167,3 +277,22 @@ export type {
   TitleBarSize,
   TitleBarStyle
 } from "./contracts/window";
+export type {
+  PdfApi,
+  PdfAvailability,
+  RenderPdfOptions,
+  RenderedPdf,
+  PaperSize,
+  PaperDimensions,
+  PageOrientation,
+  PageMargins,
+  PageMarginText
+} from "./contracts/pdf";
+export type {
+  ShareApi,
+  ShareAvailability,
+  ShareOptions,
+  ShareResult,
+  ShareAnchor,
+  SharedFile
+} from "./contracts/share";

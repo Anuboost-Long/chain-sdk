@@ -9,6 +9,9 @@ import { dev } from "./dev.js";
 import { build } from "./build.js";
 import { clean } from "./clean.js";
 import { inspect } from "./inspect.js";
+import { chainRoot } from "./scaffold.js";
+import { staleSources } from "./staleBuild.js";
+import { updatesKey } from "./updates.js";
 
 const cliDir = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(cliDir, "../package.json"), "utf8")) as {
@@ -59,6 +62,13 @@ Usage:
   chain database scaffold     Generate @Table classes from an app's
                                existing hand-written migrations, so
                                \`migration add\` can take over.
+  chain updates key <file>    Make the key pair that signs this app's
+                               updates: the private key goes to <file>
+                               (outside the app), the public key is
+                               printed for package.json "chain.updates".
+                               \`chain build\` then signs with
+                               CHAIN_UPDATE_KEY=<file> and writes the
+                               update feed; --notes <file> adds notes.
   chain clean                 Free disk space: remove this app's release
                                builds and its own crate from the shared
                                dev build cache (run from inside the app).
@@ -72,6 +82,20 @@ Usage:
 }
 
 const [command, ...args] = process.argv.slice(2);
+
+// A checkout's CLI runs from dist/ but reads templates/ live, so a stale
+// build pairs new templates with an old file list: init and update would
+// half-apply them, so they refuse.
+const stale = staleSources(chainRoot);
+if (stale.length > 0) {
+  const shown = stale.slice(0, 3).join(", ") + (stale.length > 3 ? `, +${stale.length - 3} more` : "");
+  const rebuild = `cd ${chainRoot} && npm run build`;
+  if (command === "init" || command === "update") {
+    console.error(`Error: this chain CLI is older than its source (${shown}). Rebuild it first: ${rebuild}`);
+    process.exit(1);
+  }
+  console.error(`Warning: this chain CLI is older than its source (${shown}); rebuild with: ${rebuild}\n`);
+}
 
 switch (command) {
   case "init": {
@@ -106,6 +130,14 @@ switch (command) {
 
   case "update":
     await update();
+    break;
+
+  case "updates":
+    if (args[0] !== "key") {
+      console.error("Usage: chain updates key <file>");
+      process.exit(1);
+    }
+    updatesKey(args.slice(1));
     break;
 
   // Loaded on demand: they use node:sqlite, whose ExperimentalWarning

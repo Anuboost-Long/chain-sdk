@@ -1,0 +1,16 @@
+{
+  "name": "updates",
+  "description": "A built app updating itself from a public feed: check, download with progress, then install and relaunch (or install on quit), each update proved to come from the app's owner by an Ed25519 signature, independent of Apple's code signing.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/updates/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

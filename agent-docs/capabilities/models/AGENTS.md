@@ -16,6 +16,11 @@ and the bundled sherpa-onnx engine behind `desktop.speech.transcribe`'s
   on (user decision, 2026-09-28). Never make it the default, and never use
   the `sherpa-onnx`/`sherpa-onnx-sys` crates (they always link TTS). See
   research/LICENSING.md.
+- **`desktop.packages` shares this store** (`Models::open_store(dir,
+  false)` in `packages.rs`): same download/verify/unpack, its own folder,
+  no single-folder lift, paths returned. Keep error messages in
+  `models.rs` neutral ("{id} isn't installed"), since both show them.
+  Never add a runnable mode to models itself (user decision, 2026-10-14).
 - **TTS** lives in `crates/core/src/sherpa/tts.rs` — see
   `agent-docs/capabilities/tts/`.
 - VAD is a separately installed model (Silero, 0.6 MB), not bundled —

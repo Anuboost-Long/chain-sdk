@@ -6,12 +6,15 @@
 export type ChainErrorCode =
   | "UNSUPPORTED"
   | "PERMISSION_DENIED"
+  /** Outside every folder the user granted, or a write under a read-only one (desktop.folders). */
+  | "NOT_GRANTED"
   | "NOT_FOUND"
   | "UNAVAILABLE"
   | "INVALID_ARGUMENT"
   | "CANCELLED"
   | "INTEGRITY_FAILED"
   | "TOO_LARGE"
+  | "TIMEOUT"
   | "HTTP_ERROR"
   | "NATIVE_FAILURE";
 

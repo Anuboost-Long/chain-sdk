@@ -1,0 +1,63 @@
+import { ContractSource, PlatformSupport } from "@/components/capability";
+
+export const metadata = {
+  title: "Ports",
+  description: "desktop.ports: check whether a local TCP port is free."
+};
+
+# Ports
+
+<div className="lead">
+  Check whether a server your app is about to start could use a TCP port, for example to move a second dev server to
+  the next free port.
+</div>
+
+<PlatformSupport name="ports" />
+
+## Example
+
+Find the first free port at or above a tool's default:
+
+```ts
+import { desktop } from "@chain/sdk";
+
+async function firstFreePort(from: number, attempts = 100): Promise<number | undefined> {
+  for (let port = from; port < from + attempts && port <= 65535; port++) {
+    if (await desktop.ports.isFree(port)) return port;
+  }
+}
+
+const port = await firstFreePort(5173); // 5174 if a Vite server already has 5173
+```
+
+## API
+
+<ContractSource name="ports" />
+
+### `isFree(port)`
+
+Resolves `true` when a server could listen on `port` right now, and `false` when something already uses it or the
+system won't allow it.
+
+## Behavior
+
+- **Both IPv4 and IPv6 are checked**, on all interfaces and on localhost (`0.0.0.0`, `127.0.0.1`, `::`, `::1`). A
+  server listening only on `::1`, as Vite does on macOS, counts as using the port.
+- **Nothing is left open.** The check binds the port briefly and closes it straight away. It's fast enough to call in
+  a loop.
+- **It's a snapshot.** Another program can take the port a moment later.
+
+## Errors
+
+| Code               | When                                             |
+| ------------------ | ------------------------------------------------ |
+| `INVALID_ARGUMENT` | `port` isn't a whole number from 1 to 65535.     |
+| `NATIVE_FAILURE`   | The check itself failed. `message` has details.  |
+| `UNSUPPORTED`      | Called outside a Chain app.                      |
+
+## Not included
+
+- **No finding which program holds a port**, and no stopping it. Run `lsof` with
+  [Process runner](/capabilities/process-runner/).
+- **No reserving a port.** Start your server right after checking.
+- **UDP isn't checked.**

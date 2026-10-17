@@ -91,6 +91,9 @@ chain migration add <name>  # generate the next migration (Up + Down SQL) by dif
 chain database update [target]  # apply pending migrations to the app's real SQLite file,
                              # or revert down to a target, without launching the app
 chain database scaffold     # adopt hand-written migrations: generate the schema classes
+chain updates key <file>    # make the key pair that signs the app's updates
+                             # (desktop.updates); `chain build` signs with
+                             # CHAIN_UPDATE_KEY and writes the update feed
 chain clean                 # free disk: this app's release builds + its crate in the
                              # shared dev build cache; `--all` clears that whole cache
 chain doctor                # check/install the Rust toolchain a Chain app needs to build
@@ -109,6 +112,10 @@ placeholder branding/icons already applied — see
 The scaffolded app's `dev`/`build` scripts run `chain dev`/`chain build`,
 which point Tauri at the native project hidden away in `.chain/native/`
 (not the conventional `src-tauri/` — see that same doc for why and how).
+`.chain/native` is generated, like Next.js's `.next`: `chain dev`/`build`/
+`update` rewrite it from the templates plus package.json (`"chain.app"`
+holds the name and identifier), so a deleted or broken one comes back;
+only its `Cargo.lock` is committed.
 `update` does a real three-way merge (via `git merge-file`, baseline
 snapshot in `.chain/baseline/`) so developer edits survive — files the
 developer never touched get the new template silently; files that

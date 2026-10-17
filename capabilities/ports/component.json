@@ -1,0 +1,16 @@
+{
+  "name": "ports",
+  "description": "Whether a local TCP port is free, answered by briefly binding it on the IPv4 and IPv6 wildcard and loopback addresses.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/ports/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

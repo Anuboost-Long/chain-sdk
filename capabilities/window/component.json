@@ -1,6 +1,6 @@
 {
   "name": "window",
-  "description": "The app window's chrome: title bar style and size, title text, window buttons (visibility and position), light/dark appearance, background colour, page-declared drag regions, title bar insets and full-screen state.",
+  "description": "The app window's chrome: title bar style and size, title text, window buttons (visibility and position), light/dark appearance, background colour, page-declared drag regions, title bar insets and full-screen state; at startup, when it first shows, its size, minimum size and title, and whether Tab reaches every control.",
   "status": "draft",
   "contract": {
     "semantic": "../../agent-docs/capabilities/window/CONTRACT.md",
@@ -11,6 +11,6 @@
     "windows": "unverified",
     "linux": "unverified"
   },
-  "consumers": ["mneme"],
+  "consumers": ["mneme", "lazify"],
   "generalizable": true
 }

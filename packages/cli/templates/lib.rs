@@ -4,8 +4,14 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager};
 
+mod attention;
 mod browser;
+mod browser_view;
 mod dev_inspector;
+mod folders;
+mod pdf;
+mod terminal;
+mod updates;
 mod window;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -91,14 +97,18 @@ fn storage_rollback(app: tauri::AppHandle, state: tauri::State<StorageState>, tr
 }
 
 // A reloaded or navigated page can't finish what the previous one started.
-// The browser capability's webviews are other sites, not the app.
+// The browser capability's webviews are other sites, and the pdf
+// capability's are documents being rendered, not the app.
 fn release_abandoned_work(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
-    if webview.label().starts_with(chain_core::browser::LABEL_PREFIX) {
+    let label = webview.label();
+    if label.starts_with(chain_core::browser::LABEL_PREFIX) || label.starts_with(chain_core::pdf::LABEL_PREFIX) {
         return;
     }
     rollback_abandoned_transaction(webview, payload);
     if payload.event() == tauri::webview::PageLoadEvent::Started {
         chain_core::audio_recorder::cancel();
+        folders::release_page(webview);
+        browser_view::release_page(webview);
     }
 }
 
@@ -272,6 +282,66 @@ async fn files_pick(
         body.extend_from_slice(&file.bytes);
     }
     Ok(tauri::ipc::Response::new(body))
+}
+
+// Bridges the share capability contract (capabilities/share in
+// chain-sdk). The files are copied, under the names the recipient sees,
+// into a folder of their own in the cache, so the app may delete its own
+// as soon as show() resolves; the folder goes on cancel, else a day later
+// (a service like Copy holds only its URL). See
+// agent-docs/capabilities/share/CONTRACT.md.
+fn to_share_command_error(e: chain_core::share::ShareError) -> String {
+    use chain_core::share::ShareError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Other(m) => m,
+    }
+}
+
+#[tauri::command]
+fn share_availability() -> chain_core::share::Availability {
+    chain_core::share::availability()
+}
+
+#[tauri::command]
+async fn share_show(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    files_state: tauri::State<'_, FilesState>,
+    files: serde_json::Value,
+    options: Option<serde_json::Value>,
+) -> Result<chain_core::share::ShareResult, String> {
+    use chain_core::share;
+    let shared = share::parse_files(files).map_err(to_share_command_error)?;
+    let options = share::ShareOptions::parse(options).map_err(to_share_command_error)?;
+    let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("chain-share");
+    share::sweep(&root);
+    let (folder, copies) =
+        with_files(&app, &files_state, |files| Ok(share::stage(files, &root, &shared)))?.map_err(to_share_command_error)?;
+
+    let (tx, rx) = mpsc::channel();
+    let done: share::ShowDone = Box::new(move |result| {
+        let _ = tx.send(result);
+    });
+    webview
+        .with_webview(move |page| {
+            #[cfg(target_os = "macos")]
+            share::show(page.inner(), &folder, &copies, &options, done);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = page;
+                share::show(std::ptr::null_mut(), &folder, &copies, &options, done);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "the share menu closed without an answer".to_string())?
+        .map_err(to_share_command_error)
 }
 
 // Bridges the http capability contract (capabilities/http in
@@ -461,8 +531,8 @@ fn __chain_agent_server_respond(
 // in chain-sdk). chain_core::process_runner owns the actual spawn/pipe-
 // reading and knows nothing about Tauri. Unlike agent-server, this
 // direction needs no blocking wait for a JS reply — output/exit are
-// purely outbound events the webview listens for; the only inbound call
-// is `process_runner_kill`. See
+// purely outbound events the webview listens for; the inbound calls are
+// `process_runner_kill` and stdin writes. See
 // agent-docs/capabilities/process-runner/CONTRACT.md.
 #[derive(Default)]
 struct ProcessRunnerState {
@@ -470,7 +540,7 @@ struct ProcessRunnerState {
     // `process_runner_run` command call that created them) can hold
     // their own clone, same reasoning AgentServerState's `pending` field
     // uses.
-    processes: Arc<Mutex<HashMap<String, chain_core::process_runner::ProcessHandle>>>,
+    processes: Arc<Mutex<HashMap<String, Arc<chain_core::process_runner::ProcessHandle>>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -478,7 +548,11 @@ struct ProcessRunnerState {
 struct ProcessOutputPayload {
     id: String,
     stream: &'static str,
-    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    /// Base64, with `output: "bytes"` — JSON can't carry raw bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -495,6 +569,8 @@ fn to_process_runner_command_error(e: chain_core::process_runner::ProcessRunnerE
         InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
         NotFound(m) => format!("NOT_FOUND: {m}"),
         PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
+        Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        TimedOut(m) => format!("TIMEOUT: {m}"),
         Other(m) => m,
     }
 }
@@ -530,7 +606,16 @@ fn process_runner_run(
     command: String,
     args: Vec<ProcessArg>,
     stdin: Option<String>,
+    keep_stdin_open: Option<bool>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
+    bytes: Option<bool>,
 ) -> Result<(), String> {
+    // Must be an existing folder inside a grant — see folders/CONTRACT.md.
+    let cwd = match cwd {
+        Some(cwd) => Some(folders::folders(&app)?.working_directory(&cwd).map_err(folders::to_folders_command_error)?),
+        None => None,
+    };
     // Resolved before anything spawns: an unknown reference rejects run()
     // with NOT_FOUND and no process is ever started.
     let args = args
@@ -552,15 +637,27 @@ fn process_runner_run(
     let handle = chain_core::process_runner::run(
         &command,
         &args,
-        stdin,
+        chain_core::process_runner::RunOptions {
+            bytes: bytes.unwrap_or(false),
+            stdin,
+            keep_stdin_open: keep_stdin_open.unwrap_or(false),
+            cwd,
+            env: env.unwrap_or_default().into_iter().collect(),
+        },
         move |chunk| {
             let stream = match chunk.stream {
                 chain_core::process_runner::ProcessStream::Stdout => "stdout",
                 chain_core::process_runner::ProcessStream::Stderr => "stderr",
             };
+            let (data, bytes) = match chunk.data {
+                chain_core::process_runner::ProcessOutputData::Text(text) => (Some(text), None),
+                chain_core::process_runner::ProcessOutputData::Bytes(bytes) => {
+                    (None, Some(chain_core::process_runner::encode_base64(&bytes)))
+                }
+            };
             let _ = app_for_output.emit(
                 "chain://process-output",
-                ProcessOutputPayload { id: id_for_output.clone(), stream, data: chunk.data },
+                ProcessOutputPayload { id: id_for_output.clone(), stream, data, bytes },
             );
         },
         move |exit| {
@@ -573,19 +670,107 @@ fn process_runner_run(
     )
     .map_err(to_process_runner_command_error)?;
 
-    processes.lock().expect("process-runner mutex poisoned").insert(id.clone(), handle);
+    processes.lock().expect("process-runner mutex poisoned").insert(id.clone(), Arc::new(handle));
+    Ok(())
+}
+
+fn running_process(
+    state: &ProcessRunnerState,
+    id: &str,
+) -> Option<Arc<chain_core::process_runner::ProcessHandle>> {
+    state.processes.lock().expect("process-runner mutex poisoned").get(id).cloned()
+}
+
+// Async and off the main thread: stopping the tree can take up to 5s.
+#[tauri::command]
+async fn process_runner_kill(state: tauri::State<'_, ProcessRunnerState>, id: String) -> Result<(), String> {
+    // Idempotent — a missing id (already exited and cleaned up, or never
+    // existed) is treated as already-stopped, not an error, same
+    // reasoning ProcessHandle::kill() itself already uses.
+    let Some(handle) = running_process(&state, &id) else { return Ok(()) };
+    tauri::async_runtime::spawn_blocking(move || handle.kill())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_process_runner_command_error)
+}
+
+#[tauri::command]
+fn process_runner_write(state: tauri::State<ProcessRunnerState>, id: String, text: String) -> Result<(), String> {
+    let handle = running_process(&state, &id).ok_or_else(|| format!("UNAVAILABLE: process {id} has exited"))?;
+    handle.write(text).map_err(to_process_runner_command_error)
+}
+
+#[tauri::command]
+fn process_runner_close_stdin(state: tauri::State<ProcessRunnerState>, id: String) {
+    if let Some(handle) = running_process(&state, &id) {
+        handle.close_stdin();
+    }
+}
+
+// Not tracked in ProcessRunnerState: a launched program is never the app's
+// to stop, so quit-time cleanup must not find it.
+#[tauri::command]
+fn process_runner_launch(command: String, args: Vec<String>) -> Result<(), String> {
+    chain_core::process_runner::launch(&command, &args).map_err(to_process_runner_command_error)
+}
+
+// Bridges the ports capability contract (capabilities/ports in chain-sdk):
+// whether a dev server could bind a TCP port right now. Takes a u32, not a
+// u16, so 70000 reaches the range check instead of failing to deserialize.
+#[tauri::command]
+fn ports_is_free(port: u32) -> Result<bool, String> {
+    let port = u16::try_from(port)
+        .ok()
+        .filter(|p| *p != 0)
+        .ok_or_else(|| format!("INVALID_ARGUMENT: port must be between 1 and 65535, got {port}"))?;
+    chain_core::ports::is_free(port)
+}
+
+// Bridges the page-zoom capability contract (capabilities/page-zoom in
+// chain-sdk): the webview's own page zoom (WKWebView pageZoom), so the page
+// reflows and canvases stay sharp, unlike CSS zoom. WebKit has no getter
+// through Tauri, so the factor each webview was set to is kept here.
+#[derive(Default)]
+struct PageZoomState(Mutex<HashMap<String, f64>>);
+
+#[tauri::command]
+fn page_zoom_set(webview: tauri::Webview, state: tauri::State<PageZoomState>, factor: f64) -> Result<(), String> {
+    let factor = chain_core::page_zoom::check(factor).map_err(|e| format!("INVALID_ARGUMENT: {e}"))?;
+    webview.set_zoom(factor).map_err(|e| e.to_string())?;
+    state.0.lock().expect("page-zoom mutex poisoned").insert(webview.label().to_string(), factor);
     Ok(())
 }
 
 #[tauri::command]
-fn process_runner_kill(state: tauri::State<ProcessRunnerState>, id: String) -> Result<(), String> {
-    // Idempotent — a missing id (already exited and cleaned up, or never
-    // existed) is treated as already-stopped, not an error, same
-    // reasoning ProcessHandle::kill() itself already uses.
-    if let Some(handle) = state.processes.lock().expect("process-runner mutex poisoned").get(&id) {
-        handle.kill().map_err(to_process_runner_command_error)?;
+fn page_zoom_get(webview: tauri::Webview, state: tauri::State<PageZoomState>) -> f64 {
+    state.0.lock().expect("page-zoom mutex poisoned").get(webview.label()).copied().unwrap_or(1.0)
+}
+
+// Bridges the keep-awake capability contract (capabilities/keep-awake in
+// chain-sdk): one power assertion for the whole app, released by the
+// kernel if the app exits or crashes.
+fn to_keep_awake_command_error(e: chain_core::keep_awake::KeepAwakeError) -> String {
+    use chain_core::keep_awake::KeepAwakeError::*;
+    match e {
+        InvalidArgument(m) => format!("INVALID_ARGUMENT: {m}"),
+        Unsupported(m) => format!("UNSUPPORTED: {m}"),
+        Other(m) => m,
     }
-    Ok(())
+}
+
+#[tauri::command]
+fn keep_awake_start(reason: String, display: Option<bool>) -> Result<(), String> {
+    chain_core::keep_awake::start(&reason, display.unwrap_or(true)).map_err(to_keep_awake_command_error)
+}
+
+#[tauri::command]
+fn keep_awake_stop() {
+    chain_core::keep_awake::stop();
+}
+
+#[tauri::command]
+fn keep_awake_status() -> Option<chain_core::keep_awake::Held> {
+    chain_core::keep_awake::held()
 }
 
 // Bridges the models capability contract (capabilities/models in
@@ -676,6 +861,86 @@ async fn models_remove(
     state.installs.cancel(&id);
     let models = models_of(&app, &state)?;
     tauri::async_runtime::spawn_blocking(move || models.remove(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+// Bridges the packages capability contract (capabilities/packages in
+// chain-sdk): archives the app runs from, in a `packages/` sibling of
+// `models/`. Same store and errors as models, but paths go to JS.
+#[derive(Default)]
+struct PackagesState {
+    packages: Mutex<Option<chain_core::packages::Packages>>,
+    installs: chain_core::packages::Installs,
+}
+
+fn packages_of(app: &tauri::AppHandle, state: &PackagesState) -> Result<chain_core::packages::Packages, String> {
+    let mut guard = state.packages.lock().expect("packages mutex poisoned");
+    if guard.is_none() {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        *guard = Some(chain_core::packages::Packages::open(&dir.join("packages")).map_err(to_models_command_error)?);
+    }
+    Ok(guard.clone().expect("just initialized above"))
+}
+
+#[tauri::command]
+async fn packages_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+    manifest: chain_core::packages::PackageManifest,
+) -> Result<chain_core::packages::InstalledPackage, String> {
+    let packages = packages_of(&app, &state)?;
+    let ticket = state.installs.begin(&manifest.id).map_err(to_models_command_error)?;
+    let id = manifest.id.clone();
+    let download = packages
+        .download(&manifest, &ticket, |received, total| {
+            let _ = app.emit("chain://packages-progress", ModelsProgressPayload { id: id.clone(), received, total });
+        })
+        .await
+        .map_err(to_models_command_error)?;
+    tauri::async_runtime::spawn_blocking(move || packages.install(download, &ticket))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+fn packages_resolve(
+    app: tauri::AppHandle,
+    state: tauri::State<PackagesState>,
+    id: String,
+    file: String,
+) -> Result<String, String> {
+    packages_of(&app, &state)?.resolve(&id, &file).map_err(to_models_command_error)
+}
+
+#[tauri::command]
+fn packages_cancel(state: tauri::State<PackagesState>, id: String) {
+    state.installs.cancel(&id);
+}
+
+#[tauri::command]
+async fn packages_list(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+) -> Result<Vec<chain_core::packages::InstalledPackage>, String> {
+    let packages = packages_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || packages.list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(to_models_command_error)
+}
+
+#[tauri::command]
+async fn packages_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PackagesState>,
+    id: String,
+) -> Result<(), String> {
+    state.installs.cancel(&id);
+    let packages = packages_of(&app, &state)?;
+    tauri::async_runtime::spawn_blocking(move || packages.remove(&id))
         .await
         .map_err(|e| e.to_string())?
         .map_err(to_models_command_error)
@@ -1036,6 +1301,7 @@ fn to_speech_command_error(e: chain_core::speech::SpeechError) -> String {
     match e {
         Unsupported(m) => format!("UNSUPPORTED: {m}"),
         Unavailable(m) => format!("UNAVAILABLE: {m}"),
+        NotFound(m) => format!("NOT_FOUND: {m}"),
         PermissionDenied(m) => format!("PERMISSION_DENIED: {m}"),
         Cancelled => "CANCELLED: the transcription was cancelled".to_string(),
         Other(m) => m,
@@ -1199,20 +1465,40 @@ pub fn run() {
     #[cfg(feature = "chain-dev-inspector")]
     chain_core::dev_launch::become_responsible_for_itself();
 
+    let mut context = tauri::generate_context!();
+    window::configure(&mut context).unwrap_or_else(|e| panic!("{e}"));
+    updates::configure(&mut context).unwrap_or_else(|e| panic!("{e}"));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(updates::plugin())
+        .manage(updates::UpdatesState::default())
         .manage(StorageState(Mutex::new(None)))
         .on_page_load(release_abandoned_work)
         .manage(FilesState(Mutex::new(None)))
         .manage(AgentServerState::default())
         .manage(ProcessRunnerState::default())
         .manage(ModelsState::default())
+        .manage(PackagesState::default())
         .manage(browser::BrowserState::default())
         .register_uri_scheme_protocol("chain-browser", browser::protocol)
+        .manage(browser_view::BrowserViewState::default())
         .manage(window::WindowState::default())
-        .on_window_event(window::on_window_event)
+        .manage(folders::FoldersState::default())
+        .manage(terminal::TerminalState::default())
+        .manage(attention::AttentionState::default())
+        .manage(PageZoomState::default())
+        .on_window_event(|window, event| {
+            window::on_window_event(window, event);
+            folders::on_window_event(window, event);
+            attention::on_window_event(window, event);
+            browser_view::on_window_event(window, event);
+        })
+        .manage(pdf::PdfState::default())
         .setup(|_app| {
             window::setup(_app)?;
+            attention::setup(_app);
+            browser_view::setup(_app);
             _app.manage(dev_inspector::InspectorState::default());
             #[cfg(feature = "chain-dev-inspector")]
             dev_inspector::start(_app.handle().clone());
@@ -1235,6 +1521,25 @@ pub fn run() {
             files_save,
             files_open,
             files_reveal,
+            folders::folders_pick,
+            folders::folders_grants,
+            folders::folders_revoke,
+            folders::folders_app_folder,
+            folders::folders_accept_drops,
+            folders::folders_list,
+            folders::folders_stat,
+            folders::folders_exists,
+            folders::folders_read_text,
+            folders::folders_read_bytes,
+            folders::folders_write_text,
+            folders::folders_write_bytes,
+            folders::folders_create_folder,
+            folders::folders_move,
+            folders::folders_delete,
+            folders::folders_watch,
+            folders::folders_unwatch,
+            share_availability,
+            share_show,
             http_request,
             http_request_bytes,
             agent_server_start,
@@ -1242,6 +1547,26 @@ pub fn run() {
             __chain_agent_server_respond,
             process_runner_run,
             process_runner_kill,
+            process_runner_write,
+            process_runner_close_stdin,
+            process_runner_launch,
+            ports_is_free,
+            attention::attention_is_focused,
+            attention::attention_request,
+            attention::attention_permission,
+            attention::attention_notify,
+            page_zoom_set,
+            page_zoom_get,
+            keep_awake_start,
+            keep_awake_stop,
+            keep_awake_status,
+            terminal::terminal_start,
+            terminal::terminal_list,
+            terminal::terminal_backlog,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_kill,
+            terminal::terminal_remove,
             vision_recognize_text,
             vision_recognize_document,
             vision_languages,
@@ -1252,6 +1577,11 @@ pub fn run() {
             models_cancel,
             models_list,
             models_remove,
+            packages_install,
+            packages_resolve,
+            packages_cancel,
+            packages_list,
+            packages_remove,
             tts_voices,
             tts_synthesize,
             tts_compile,
@@ -1278,6 +1608,27 @@ pub fn run() {
             browser::browser_read,
             browser::browser_fetch,
             browser::browser_clear_session,
+            browser_view::browser_view_availability,
+            browser_view::browser_view_create,
+            browser_view::browser_view_close,
+            browser_view::browser_view_set_bounds,
+            browser_view::browser_view_set_visible,
+            browser_view::browser_view_load,
+            browser_view::browser_view_go,
+            browser_view::browser_view_reload,
+            browser_view::browser_view_stop,
+            browser_view::browser_view_state,
+            browser_view::browser_view_answer,
+            browser_view::browser_view_set_rules,
+            browser_view::browser_view_remove_rules,
+            browser_view::browser_view_set_script,
+            browser_view::browser_view_remove_script,
+            browser_view::browser_view_reply,
+            browser_view::browser_view_run_in_frames,
+            updates::updates_status,
+            updates::updates_check,
+            updates::updates_download,
+            updates::updates_install,
             window::window_availability,
             window::window_options,
             window::window_set_options,
@@ -1286,8 +1637,24 @@ pub fn run() {
             window::window_set_drag_regions,
             window::window_start_drag,
             window::window_title_bar_double_click,
+            window::window_show,
+            window::window_is_shown,
+            window::window_page_painted,
+            pdf::pdf_availability,
+            pdf::pdf_render,
             __chain_inspector_report
         ]))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Processes and terminal sessions run in their own process
+            // groups, so nothing else stops them when the app quits.
+            if let tauri::RunEvent::Exit = event {
+                updates::on_exit(app);
+                for handle in app.state::<ProcessRunnerState>().processes.lock().expect("process-runner mutex poisoned").values() {
+                    handle.kill_now();
+                }
+                terminal::terminals(app).kill_all_now();
+            }
+        });
 }

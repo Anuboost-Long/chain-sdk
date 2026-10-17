@@ -5,9 +5,83 @@
     <link rel="icon" type="image/svg+xml" href="/chain.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
+    <!-- Inline so the launch screen is the first frame the window shows
+         (package.json "showWhen": "firstPaint"), before App.css loads. -->
+    <style>
+      #launch-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 28px;
+        background: #f6f6f6;
+        transition: opacity 180ms ease-out;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        #launch-screen {
+          background: #202020;
+        }
+      }
+
+      #launch-screen[data-done] {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #launch-screen .progress {
+        width: 64px;
+        height: 2px;
+        overflow: hidden;
+        border-radius: 1px;
+        background: rgb(127 127 127 / 0.2);
+      }
+
+      #launch-screen .progress::after {
+        content: "";
+        display: block;
+        width: 40%;
+        height: 100%;
+        background: #c5f74f;
+        transform: translateX(-100%);
+      }
+
+      #launch-screen[data-window-shown] .progress::after {
+        animation: launch-progress 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+
+      @keyframes launch-progress {
+        to {
+          transform: translateX(250%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #launch-screen {
+          transition: none;
+        }
+
+        #launch-screen[data-window-shown] .progress::after {
+          animation: none;
+          width: 100%;
+          transform: none;
+          opacity: 0.6;
+        }
+      }
+    </style>
   </head>
 
   <body>
+    <output id="launch-screen" aria-label="Loading">
+      <svg width="64" height="64" viewBox="0 0 256 256" fill="none" aria-hidden="true">
+        <rect x="8" y="8" width="240" height="240" rx="52" fill="#171B24" />
+        <path d="M204 48H108C74.863 48 48 74.863 48 108V116H64Q68 116 68 120V136Q68 140 72 140H80Q84 140 84 136V120Q84 116 88 116H104V108Q104 96 116 96H184L204 76V48Z" fill="#C5F74F" />
+        <path d="M48 124H56Q60 124 60 128V144Q60 148 64 148H88Q92 148 92 144V128Q92 124 96 124H104V148Q104 160 116 160H184L204 180V208H108C74.863 208 48 181.137 48 148V124Z" fill="#EEF2E4" />
+      </svg>
+      <span class="progress"></span>
+    </output>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

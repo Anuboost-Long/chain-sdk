@@ -100,6 +100,26 @@ onOutput)` stays identical either way):
 - [ ] Update `docs/CAPABILITY_MATRIX.md`'s Windows column and this
       capability's `component.json` once confirmed.
 
+## Tree kill on Windows (request 03) — implemented blind, not verified
+
+There are no POSIX process groups. `process_tree::terminate` runs
+`%SystemRoot%\System32\taskkill.exe /PID <pid> /T /F` (by absolute path,
+like `chain dev` does), which walks the parent/child tree. It has no
+graceful phase, and exit code 128 ("not found") counts as already gone.
+It has never been compiled or run on Windows.
+
+The better long-term answer is a **Job Object** created at spawn with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: `TerminateJobObject` kills every
+process in it, even ones whose parent already exited (which breaks
+`taskkill /T`'s parent chain), and closing the job handle kills the tree
+if the app crashes. Needs `CREATE_SUSPENDED` + `AssignProcessToJobObject`
++ resume, or `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so it doesn't fit
+`std::process::Command` without raw `windows` calls.
+
+Checklist: `npm run dev` (a `.cmd` shim, so see the shim question above
+first) → `kill()` → the port is free immediately; a process that's
+already exited → `kill()` resolves.
+
 ## File-reference arguments on Windows (request 14) — not yet verified
 
 The reason `files` hides paths is Windows' `MAX_PATH` (260). A resolved
@@ -116,3 +136,20 @@ programs accept.
       form is accepted by the same CLI; if a target CLI rejects `\\?\`,
       document it here — the capability can't fix a child's own path
       handling.
+
+## Launching a program that outlives the app (request 15) — not verified
+
+`process_tree::leave_the_app` sets `DETACHED_PROCESS |
+CREATE_NEW_PROCESS_GROUP` (no console, not reached by a console Ctrl-C).
+Never compiled or run on Windows. Open questions for real hardware:
+
+- `chain dev` stops the app with `taskkill /T /F`, which walks parent-pid
+  links, not process groups, so it may kill a launched program while its
+  parent (the app) is still alive. If so, the fix is breaking that link
+  (e.g. a short-lived intermediate process), never a shell string.
+- If the app runs inside a job object (some terminals and `cargo run`
+  create one with `KILL_ON_JOB_CLOSE`), the launched program dies with
+  the job unless it is started with `CREATE_BREAKAWAY_FROM_JOB`, which
+  itself fails with access denied when the job forbids breakaway.
+- `code` on Windows is `code.cmd`: the same npm-shim problem as `run()`
+  (see the top of this file).

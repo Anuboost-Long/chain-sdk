@@ -63,10 +63,18 @@ run(
   command: string,
   args: string[],
   onOutput: (chunk: { stream: "stdout" | "stderr"; data: string }) => void,
-  options?: { stdin?: string }
+  options?: {
+    output?: "text" | "bytes"; // "bytes": data is a Uint8Array
+    stdin?: string;
+    keepStdinOpen?: boolean;
+    cwd?: string;
+    env?: Record<string, string>;
+  }
 ): Promise<{
   id: string;
   kill(): Promise<void>;
+  write(text: string): Promise<void>;
+  closeStdin(): Promise<void>;
   exited: Promise<{ code: number | null; killed: boolean }>;
 }>
 ```
@@ -97,6 +105,11 @@ line) accumulates chunks itself and splits on `\n` — this capability
 doesn't assume the child's output is line-oriented, because assuming
 that would itself be a small amount of AI-CLI-shaped awareness leaking
 into a supposedly generic primitive.
+
+Text is decoded as UTF-8 per stream, carrying a character split between
+two reads over to the next chunk, so concatenating a stream's chunks
+gives exactly the decode of all its bytes. Bytes that aren't valid UTF-8
+become U+FFFD.
 
 `stdout` and `stderr` are each delivered in the order the process
 produced them, but **interleaving between the two streams is not
@@ -145,6 +158,19 @@ Driven by mneme's request 14: `codex exec` takes images only as
 - Plain string elements behave exactly as before; existing callers are
   unchanged.
 
+### `options.output: "bytes"` — every byte, undecoded
+
+With `output: "bytes"`, `onOutput` gets `data` as a `Uint8Array`: exactly
+the bytes read, nothing decoded or replaced. Driven by Lazify's request
+16: a language server over stdio frames each message by a
+`Content-Length` **byte** count, so the caller must count bytes, not
+characters. Also covers a program whose output isn't UTF-8.
+
+- Chunk boundaries carry no meaning, as for text; concatenating a
+  stream's chunks gives exactly its bytes.
+- Everything else about `run()` is unchanged. `"text"` (the default) is
+  the behavior described above.
+
 ### `options.stdin` — a one-shot input payload
 
 When `options.stdin` is given, the process is spawned with a piped
@@ -171,35 +197,126 @@ whole module's or course's content to an agent CLI).
   as before this option existed. It is deliberately not an empty pipe,
   since some CLIs behave differently when stdin is a pipe.
 
+### `options.cwd` and `options.env`
+
+Added for Lazify's request 03: `git status` or `npm install` only means
+something in the project's own folder, and a shell `cd` is ruled out by
+the no-shell invariant.
+
+- `cwd` is an absolute path to an **existing folder inside a
+  `desktop.folders` grant** (picked, dropped or declared; read-only is
+  enough). It's resolved like any folders path (symlinks, case) and
+  checked natively before anything spawns: outside every grant →
+  `NOT_GRANTED`, missing → `NOT_FOUND`, a file → `INVALID_ARGUMENT`. The
+  grant check is a consistency check, not a sandbox: the process itself
+  can still go anywhere its arguments point.
+- `env` is set **over** the inherited environment, after the login-shell
+  `PATH` (see above), so a `PATH` in `env` wins and is also what finds
+  `command`. Replacing the whole environment isn't supported.
+- Leaving both out behaves exactly as before.
+
+### `options.keepStdinOpen`, `handle.write()` and `handle.closeStdin()`
+
+The request 03 decision on interactive input: **pipe-based stdin lives
+here; a real terminal is the separate `terminal` capability.** Lazify
+answers a scaffolding CLI's `Overwrite? (y/N)` by writing `y\n` into the
+still-running process today, over a pipe, and its prompt detection reads
+plain piped output. A PTY would change that output (colours, redraws),
+so this stays a pipe.
+
+- `keepStdinOpen: true` gives the process a piped stdin that stays open.
+  `options.stdin`, if also given, is written first.
+- `write(text)` queues `text` for stdin, in order, and resolves once
+  queued, not once read. A process that never reads it is not an error,
+  the same rule as the one-shot payload.
+- `closeStdin()` closes stdin after everything already queued, so the
+  process sees EOF. Idempotent.
+- `write()` rejects with `UNAVAILABLE` without `keepStdinOpen`, after
+  `closeStdin()`, or once the process has exited.
+
 ## `handle.kill()`
 
 ```
 kill(): Promise<void>
 ```
 
-Terminates the process. **Idempotent** — killing a process that has
-already exited (including one that already exited on its own) resolves
-successfully rather than rejecting, same reasoning `files.delete()` and
-`agentServer.stop()` already use. After `kill()`, `handle.exited`
-resolves with `{ killed: true }`.
+Stops the process **and everything it started** (Lazify request 03:
+killing only `npm run dev`'s wrapper leaves the real server holding the
+port). Each process is started as the leader of its own process group.
+`kill()` sends SIGTERM to the whole group, SIGKILL 2 seconds later if
+anything is still alive, and resolves once every member is gone. If
+anything is still alive at 5 seconds it rejects with `TIMEOUT`. On
+Windows it's `taskkill /T /F` over the process tree instead, with no
+grace period (unverified, see `research/WINDOWS.md`).
+
+**Idempotent** — killing a process that has already exited (including
+one that already exited on its own) resolves successfully rather than
+rejecting, same reasoning `files.delete()` and `agentServer.stop()`
+already use. After `kill()`, `handle.exited` resolves with
+`{ killed: true }`.
+
+A program that deliberately leaves its group (`setsid`, daemonising) is
+out of reach, as it is for a terminal's Ctrl-C.
+
+### When the app quits
+
+Every process still running when the app quits normally is killed with
+its tree (SIGKILL, no grace period). An app killed by a signal (e.g.
+`chain dev` restarting it) gets no chance to do this, so its processes
+outlive it. A program meant to outlive the app is started with
+`launch()` instead.
+
+## `desktop.processRunner.launch(command, args)`
+
+```
+launch(command: string, args: string[]): Promise<void>
+```
+
+Starts a program that **is not the app's to stop**, then forgets it.
+Driven by Lazify's request 15: "Open in editor" runs a user-set command
+such as `code {folder} -g {file}:{line}` or a JetBrains launcher
+(`.../IntelliJ IDEA.app/Contents/MacOS/idea`), which *is* the IDE. Started
+with `run()`, that IDE would be killed with SIGKILL when the app quits.
+
+- Same rules as `run()` for finding and starting it: `command` resolved on
+  the login-shell `PATH`, `args` a literal argv array, never a shell.
+- Resolves once the program has started, not once it finishes. Nothing
+  comes back: no output, no exit code, no handle.
+- The program outlives the app however the app ends: a normal quit, a
+  crash, or a signal to the app's process group (`chain dev` restarting
+  it). On macOS/Linux it is started in a new session (`setsid`), so it is
+  in no process group the app or `chain dev` signals and has no
+  controlling terminal to hang up. On Windows it is started detached in
+  its own process group (unverified, see `research/WINDOWS.md`).
+- Its stdin, stdout and stderr are the null device, so nothing it does
+  depends on pipes the app holds.
+- The app never waits for it, kills it or keeps a record of it.
 
 ## Errors
 
 - `run()` rejects with `ChainError { code: "INVALID_ARGUMENT" }` if
-  `command` is empty.
+  `command` is empty, or `cwd` isn't a folder; `launch()` if `command` is
+  empty.
+- `run()` rejects with `ChainError { code: "NOT_GRANTED" }` if `cwd` is
+  outside every `desktop.folders` grant, and `NOT_FOUND` if it doesn't
+  exist.
+- `write()` rejects with `UNAVAILABLE` when stdin isn't open (see
+  above).
+- `kill()` rejects with `TIMEOUT` if part of the tree is still alive 5
+  seconds after it was told to stop.
 - `run()` rejects with `ChainError { code: "NOT_FOUND" }` if an `args`
   element's `fileReference` doesn't resolve to an existing managed file.
-- `run()` rejects with `ChainError { code: "NOT_FOUND" }` if `command`
+- `run()` and `launch()` reject with `ChainError { code: "NOT_FOUND" }` if `command`
   can't be resolved to an executable at all (no such command on `PATH`)
   — mirrors `files`' own `NOT_FOUND` for "the thing you referenced
   doesn't exist," and matches the OS-level `ENOENT` this condition
   actually is.
-- `run()` rejects with `ChainError { code: "PERMISSION_DENIED" }` if the
+- `run()` and `launch()` reject with `ChainError { code: "PERMISSION_DENIED" }` if the
   OS refuses to execute the resolved file (exists, but isn't
   executable/isn't permitted).
 - Any other unexpected native failure to spawn rejects with
   `ChainError { code: "NATIVE_FAILURE" }`.
-- Calling `run()` or `kill()` outside a Chain (Tauri) runtime rejects
+- Calling `run()`, `launch()` or `kill()` outside a Chain (Tauri) runtime rejects
   with `ChainError { code: "UNSUPPORTED" }`, same as every other
   capability.
 - **A non-zero exit code is not an error.** `run()`'s promise resolving
@@ -225,19 +342,13 @@ resolves with `{ killed: true }`.
 - **No AI-CLI awareness whatsoever.** No stdout parsing, no knowledge of
   `stream-json`, session ids, or any specific agent CLI's flags. See
   "The two open design questions" above.
-- **No interactive stdin, no persistent/interactive process, no PTY.**
-  Each `run()` call is a one-shot process that runs to completion or is
-  killed. The only input it can get is `options.stdin`, written once and
-  closed at spawn; there is no way to write further input into it after
-  that (no `handle.write()`). Nor is there a binary (`Uint8Array`) payload,
-  only a string. If a real
-  need for an interactive/long-lived process with stdin shows up later,
-  that's a different, future capability decision (rule 7 — don't build
-  for a hypothetical need), not something bolted onto this one.
-- **No environment-variable or working-directory options (yet).** The
-  child inherits the app's own environment and working directory;
-  nothing about either is configurable. Add this only when a real need
-  shows up, not speculatively.
+- **No PTY, no terminal.** stdin is a
+  pipe (`keepStdinOpen` plus `write()`), never a TTY. A program that
+  needs a real terminal (full-screen TUIs, resize, coloured redraws) is
+  the `terminal` capability. No binary (`Uint8Array`) input either, only
+  strings.
+- **No replacing the whole environment.** `env` adds to and overrides the
+  inherited one. Nothing asked for a clean environment.
 - **No output buffering limits or backpressure.** Chunks are forwarded
   as fast as the process produces them and the native side reads them —
   no max-chunk-size, no rate limiting, no coalescing. A process that
@@ -247,11 +358,14 @@ resolves with `{ killed: true }`.
 - **No stream-interleaving ordering guarantee across stdout/stderr.**
   See the "run()" section above — each stream is in-order internally,
   the two streams relative to each other are not.
-- **No binary-safe / arbitrary-encoding output.** `data` is always
-  UTF-8-decoded text (lossily — invalid byte sequences become U+FFFD),
-  never raw bytes. This capability is for text-producing CLIs; a process
-  whose stdout is meaningfully binary is out of scope.
-- **No process groups / no killing a tree of child processes.**
-  `kill()` terminates the spawned process itself; whether that process's
-  own children (if any) are also terminated depends on OS/process
-  behavior this capability makes no promise about.
+- **No decoding other than UTF-8.** Text output is UTF-8 (invalid
+  sequences become U+FFFD); anything else is read with
+  `output: "bytes"` and decoded by the caller.
+- **Nothing in between `run()` and `launch()`.** A `run()` process is the
+  app's: watched, killable, stopped at quit. A `launch()` process is not:
+  no output, no handle, no `cwd`/`env`/stdin. Nothing asked for a detached
+  process with output, or a tracked one that survives quit.
+- **No configurable kill signal or timings.** SIGTERM, 2 s, SIGKILL, give
+  up at 5 s is fixed. Nothing asked to tune it.
+- **No reach beyond the process group.** Children that deliberately
+  leave it (`setsid`, daemonising) aren't stopped by `kill()`.

@@ -54,7 +54,11 @@ export interface Transcript {
 }
 
 export interface SpeechApi {
-  /** Transcribes a `desktop.files` reference on-device. One at a time. */
+  /**
+   * Transcribes a `desktop.files` reference on-device: an audio file, or a
+   * video file's first sound track. One at a time. A file with no sound
+   * track rejects `NOT_FOUND`.
+   */
   transcribe(
     reference: string,
     options?: TranscribeOptions,

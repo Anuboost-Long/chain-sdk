@@ -299,7 +299,7 @@ pub struct PickedFile {
 /// One OS panel (open or save) at a time per app.
 static PICKER_OPEN: AtomicBool = AtomicBool::new(false);
 
-struct PickerOpenGuard;
+pub(crate) struct PickerOpenGuard;
 
 impl Drop for PickerOpenGuard {
     fn drop(&mut self) {
@@ -316,7 +316,7 @@ fn validate_extensions(extensions: &[String]) -> Result<(), PickError> {
     }
 }
 
-fn open_panel_guard() -> Result<PickerOpenGuard, PickError> {
+pub(crate) fn open_panel_guard() -> Result<PickerOpenGuard, PickError> {
     if PICKER_OPEN.swap(true, Ordering::SeqCst) {
         return Err(PickError::Unavailable("a file picker or save panel is already open".to_string()));
     }
@@ -420,7 +420,7 @@ fn is_valid_reference(reference: &str) -> bool {
 /// resist collision attacks) hashed together with the current time — good
 /// enough uniqueness for a filename without pulling in a `uuid`/`rand`
 /// crate just for this.
-fn generate_id() -> String {
+pub(crate) fn generate_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())

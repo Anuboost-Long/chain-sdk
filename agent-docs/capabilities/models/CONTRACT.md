@@ -42,6 +42,7 @@ install(
   old copy stays usable until the new one is fully extracted.
 - `onProgress` fires about every 100 ms and once at the end. `total` is
   the server's Content-Length, else `sizeBytes`, else `null`.
+- A download with no data for 30 seconds rejects `UNAVAILABLE`.
 - One install per id at a time; a second concurrent `install` of the same
   id rejects `UNAVAILABLE`. Different ids may install in parallel.
 - `sizeBytes` in the result is the size on disk after extraction.
@@ -72,6 +73,7 @@ Paths are never returned. Engines take the id plus relative file names.
 - No catalog, search or update checks — the app owns those.
 - No resume of interrupted downloads (a retry starts over).
 - **No downloaded code, ever** — engines are compiled into the app and
-  signed with it; packs are data only.
+  signed with it; packs are data only. Archives the app *runs from* are
+  `desktop.packages`, a separate capability (same store code).
 - No TTS yet. sherpa-onnx's TTS voices need espeak-ng (GPL-3); see
   `research/LICENSING.md` before adding it.

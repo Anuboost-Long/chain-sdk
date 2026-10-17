@@ -1,0 +1,16 @@
+{
+  "name": "attention",
+  "description": "Get the user's attention while the app is in the background: whether the window is focused, a system notification whose click brings the window back and names it, and one Dock bounce.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/attention/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

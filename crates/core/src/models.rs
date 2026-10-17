@@ -3,7 +3,8 @@
 //! into a managed directory: streamed to a temp file, SHA-256 checked
 //! before anything is kept, extracted with only plain files and folders
 //! allowed, then moved into place. Nothing downloaded is ever executed or
-//! marked executable. Plain Rust — the same on every OS.
+//! marked executable. Plain Rust — the same on every OS. packages.rs uses
+//! the same store for archives the app runs from.
 
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -78,6 +79,8 @@ struct Metadata {
 const META_DIR: &str = ".meta";
 const PARTIAL_DIR: &str = ".partial";
 const TRASH_DIR: &str = ".trash";
+/// A download with no data for this long fails `UNAVAILABLE`.
+const STALL: Duration = Duration::from_secs(30);
 
 pub fn is_valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -90,11 +93,11 @@ impl ModelManifest {
     fn validate(&self) -> Result<ArchiveKind, ModelsError> {
         let invalid = |m: String| Err(ModelsError::InvalidArgument(m));
         if !is_valid_id(&self.id) {
-            return invalid(format!("model id {:?} must be 1–64 of a–z, 0–9 and '-'", self.id));
+            return invalid(format!("id {:?} must be 1–64 of a–z, 0–9 and '-'", self.id));
         }
         match reqwest::Url::parse(&self.url) {
             Ok(url) if url.scheme() == "https" => {}
-            _ => return invalid(format!("model url must be an https:// URL, got {:?}", self.url)),
+            _ => return invalid(format!("url must be an https:// URL, got {:?}", self.url)),
         }
         if self.sha256.len() != 64 || !self.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
             return invalid("sha256 must be 64 hex characters".to_string());
@@ -132,7 +135,7 @@ impl Installs {
     pub fn begin(&self, id: &str) -> Result<InstallTicket, ModelsError> {
         let mut running = self.0.lock().expect("installs mutex poisoned");
         if running.contains_key(id) {
-            return Err(ModelsError::Unavailable(format!("model {id} is already being installed")));
+            return Err(ModelsError::Unavailable(format!("{id} is already being installed")));
         }
         let cancelled = Arc::new(AtomicBool::new(false));
         running.insert(id.to_string(), Arc::clone(&cancelled));
@@ -184,20 +187,31 @@ impl Drop for Download {
 #[derive(Clone)]
 pub struct Models {
     dir: PathBuf,
+    lift_single_folder: bool,
 }
 
 impl Models {
     pub fn open(dir: &Path) -> Result<Self, ModelsError> {
+        Self::open_store(dir, true)
+    }
+
+    /// `lift_single_folder: false` keeps archives laid out exactly as they
+    /// are — for packages, whose paths the app builds from the archive.
+    pub(crate) fn open_store(dir: &Path, lift_single_folder: bool) -> Result<Self, ModelsError> {
         for sub in [META_DIR, PARTIAL_DIR, TRASH_DIR] {
             fs::create_dir_all(dir.join(sub))?;
         }
-        Ok(Self { dir: dir.to_path_buf() })
+        Ok(Self { dir: dir.to_path_buf(), lift_single_folder })
+    }
+
+    pub(crate) fn path_of(&self, id: &str) -> PathBuf {
+        self.dir.join(id)
     }
 
     /// Streams `manifest.url` to a temp file, hashing as it goes, and
     /// rejects it unless the SHA-256 matches. `on_progress(received, total)`
     /// fires at most every 100 ms; `total` is Content-Length, else the
-    /// manifest's `sizeBytes`.
+    /// manifest's `sizeBytes`. Fails after `STALL` without data.
     pub async fn download(
         &self,
         manifest: &ModelManifest,
@@ -205,11 +219,19 @@ impl Models {
         mut on_progress: impl FnMut(u64, Option<u64>),
     ) -> Result<Download, ModelsError> {
         let kind = manifest.validate()?;
-        let unavailable = |e: reqwest::Error| ModelsError::Unavailable(format!("couldn't download the model: {e}"));
-        let mut response = reqwest::get(&manifest.url).await.map_err(unavailable)?;
+        let id = &manifest.id;
+        let unavailable = |e: reqwest::Error| {
+            if e.is_timeout() {
+                ModelsError::Unavailable(format!("couldn't download {id}: no data for {} s", STALL.as_secs()))
+            } else {
+                ModelsError::Unavailable(format!("couldn't download {id}: {e}"))
+            }
+        };
+        let client = reqwest::Client::builder().read_timeout(STALL).build().map_err(unavailable)?;
+        let mut response = client.get(&manifest.url).send().await.map_err(unavailable)?;
         if !response.status().is_success() {
             return Err(ModelsError::Unavailable(format!(
-                "couldn't download the model: the server answered {}",
+                "couldn't download {id}: the server answered {}",
                 response.status()
             )));
         }
@@ -254,7 +276,8 @@ impl Models {
         let id = download.manifest.id.clone();
         let staging = self.dir.join(PARTIAL_DIR).join(format!("{id}.{}", random_suffix()));
         fs::create_dir_all(&staging)?;
-        let unpacked = unpack(&download, &staging, ticket).and_then(|()| flatten_single_folder(&staging));
+        let unpacked = unpack(&download, &staging, ticket)
+            .and_then(|()| if self.lift_single_folder { flatten_single_folder(&staging) } else { Ok(()) });
         if let Err(e) = unpacked {
             fs::remove_dir_all(&staging).ok();
             return Err(e);
@@ -301,7 +324,7 @@ impl Models {
     /// Idempotent: removing a model that isn't installed succeeds.
     pub fn remove(&self, id: &str) -> Result<(), ModelsError> {
         if !is_valid_id(id) {
-            return Err(ModelsError::InvalidArgument(format!("invalid model id {id:?}")));
+            return Err(ModelsError::InvalidArgument(format!("invalid id {id:?}")));
         }
         let target = self.dir.join(id);
         if target.exists() {
@@ -320,7 +343,7 @@ impl Models {
     pub fn resolve(&self, id: &str, relative: &str) -> Result<PathBuf, ModelsError> {
         let path = self.inside(id, relative)?;
         if !path.is_file() {
-            return Err(ModelsError::NotFound(format!("model {id} has no file {relative:?}")));
+            return Err(ModelsError::NotFound(format!("{id} has no file {relative:?}")));
         }
         Ok(path)
     }
@@ -329,21 +352,21 @@ impl Models {
     pub fn resolve_dir(&self, id: &str, relative: &str) -> Result<PathBuf, ModelsError> {
         let path = self.inside(id, relative)?;
         if !path.is_dir() {
-            return Err(ModelsError::NotFound(format!("model {id} has no folder {relative:?}")));
+            return Err(ModelsError::NotFound(format!("{id} has no folder {relative:?}")));
         }
         Ok(path)
     }
 
     fn inside(&self, id: &str, relative: &str) -> Result<PathBuf, ModelsError> {
         if !is_valid_id(id) {
-            return Err(ModelsError::InvalidArgument(format!("invalid model id {id:?}")));
+            return Err(ModelsError::InvalidArgument(format!("invalid id {id:?}")));
         }
         if !self.dir.join(id).is_dir() {
-            return Err(ModelsError::NotFound(format!("model {id} isn't installed")));
+            return Err(ModelsError::NotFound(format!("{id} isn't installed")));
         }
         let relative_path = Path::new(relative);
         if relative.is_empty() || !relative_path.components().all(|c| matches!(c, Component::Normal(_))) {
-            return Err(ModelsError::InvalidArgument(format!("{relative:?} isn't a name inside the model")));
+            return Err(ModelsError::InvalidArgument(format!("{relative:?} isn't a relative path inside {id}")));
         }
         Ok(self.dir.join(id).join(relative_path))
     }
@@ -368,7 +391,7 @@ fn safe_relative(path: &Path) -> Option<PathBuf> {
 }
 
 fn unsafe_archive(what: &str) -> ModelsError {
-    ModelsError::InvalidArgument(format!("the archive {what} — only plain files and folders inside the model are allowed"))
+    ModelsError::InvalidArgument(format!("the archive {what} — only plain files and folders inside the install folder are allowed"))
 }
 
 /// Copies `reader` to a new file (never following or replacing anything),
@@ -400,7 +423,7 @@ fn unpack_tar<R: Read>(mut archive: tar::Archive<R>, root: &Path, ticket: &Insta
         ticket.check()?;
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
-        let relative = safe_relative(&path).ok_or_else(|| unsafe_archive(&format!("has a path outside the model ({})", path.display())))?;
+        let relative = safe_relative(&path).ok_or_else(|| unsafe_archive(&format!("has a path outside the install folder ({})", path.display())))?;
         match entry.header().entry_type() {
             tar::EntryType::Regular | tar::EntryType::Continuous => write_new_file(&root.join(relative), &mut entry)?,
             tar::EntryType::Directory => fs::create_dir_all(root.join(relative))?,
@@ -424,7 +447,7 @@ fn unpack_zip(file: fs::File, root: &Path, ticket: &InstallTicket) -> Result<(),
         let relative = entry
             .enclosed_name()
             .and_then(|p| safe_relative(&p))
-            .ok_or_else(|| unsafe_archive(&format!("has a path outside the model ({name})")))?;
+            .ok_or_else(|| unsafe_archive(&format!("has a path outside the install folder ({name})")))?;
         if entry.is_dir() {
             fs::create_dir_all(root.join(relative))?;
         } else {
@@ -455,7 +478,7 @@ fn file_name_from_url(url: &str) -> String {
     let last = url.split(['?', '#']).next().unwrap_or_default().rsplit('/').next().unwrap_or_default();
     let clean: String = last.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')).collect();
     if clean.is_empty() || clean.starts_with('.') {
-        "model".to_string()
+        "download".to_string()
     } else {
         clean
     }
@@ -584,6 +607,28 @@ mod tests {
         models.remove("tiny-model").unwrap();
         models.remove("tiny-model").unwrap();
         assert!(models.list().unwrap().is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unlifted_store_keeps_the_zip_layout_and_nothing_is_executable() {
+        let dir = temp_dir();
+        let store = Models::open_store(&dir, false).unwrap();
+        let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+        let executable = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+        zip.start_file("extension/server/ls.jar", executable).unwrap();
+        zip.write_all(b"jar").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let ticket = Installs::default().begin("tiny-model").unwrap();
+        store.install(download_of(&store, &bytes, ArchiveKind::Zip, "https://x/p.vsix"), &ticket).unwrap();
+        let path = store.resolve("tiny-model", "extension/server/ls.jar").unwrap();
+        assert_eq!(path, store.path_of("tiny-model").join("extension/server/ls.jar"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o111, 0);
+        }
         fs::remove_dir_all(&dir).ok();
     }
 

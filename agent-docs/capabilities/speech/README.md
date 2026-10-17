@@ -21,6 +21,19 @@ and runs `chain_core::speech::transcribe` on a blocking thread.
 Both backends produce tokens with times, which `group_words` turns into
 phrase segments.
 
+**Video files and Opus (request 39).** Before either backend runs,
+`Input::of` asks AVFoundation to open the file. When it can (MP4/MOV/M4V
+AAC, and Ogg Opus on macOS 26), the backend reads the file itself. When it
+can't (WebM, Matroska) the file goes through `crates/core/src/sound.rs`
+instead. symphonia demuxes it and picks the first track with a sample
+rate (video tracks have none). It decodes with symphonia, or with the
+pure-Rust `opus-decoder` straight to 16 kHz for Opus. SpeechAnalyzer
+pulls those samples through `chain_speech_analyzer_transcribe_samples`,
+one 8192-frame chunk at a time. The legacy backend appends them to an
+`SFSpeechAudioBufferRecognitionRequest`. A file with no sound track is
+`SpeechError::NotFound` → `NOT_FOUND`. The `engine` (sherpa) path always
+decodes through `sound.rs`.
+
 The Swift bridge links Swift Concurrency, which is why apps get a
 `build.rs` adding an `/usr/lib/swift` rpath and a macOS 12 minimum (both
 from `chain update`).
@@ -39,7 +52,8 @@ await desktop.speech.cancel(); // the transcribe() above rejects CANCELLED
 
 - `capabilities/speech/contract.ts` — TS types.
 - `crates/core/src/speech.rs` — dispatch, one-at-a-time guard, cancel, legacy backend, segment grouping (+ tests).
-- `crates/core/swift/ChainSpeech.swift` — the SpeechAnalyzer bridge (C ABI, JSON payloads).
+- `crates/core/swift/ChainSpeech.swift` — the SpeechAnalyzer bridge (C ABI, JSON payloads; `SampleSource` for decoded sound).
+- `crates/core/src/sound.rs` — first-sound-track decoding for video/Opus and for the `engine` path (+ tests over `crates/core/tests/fixtures/speech/`).
 - `crates/core/build.rs` — compiles the Swift file; link search order matters (see research/MACOS.md).
 - `packages/cli/templates/lib.rs` — `speech_transcribe`/`speech_cancel`/`speech_locales`.
 - `packages/cli/templates/build.rs` — the app's `/usr/lib/swift` rpath.

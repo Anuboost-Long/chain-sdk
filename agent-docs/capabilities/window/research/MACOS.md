@@ -83,6 +83,46 @@ a borderless window loses its rounded corners, shadow and resize edges.
   runs inline there; AppKit can send window events synchronously while
   options change, so the state lock is never held across AppKit calls.
 
+- **Keeping the window hidden until the page paints (request 40)**:
+  an ordered-out window (Tauri `visible: false` / `hide()`) gets no
+  rendering from WebKit — no animation frames, nothing painted — so the
+  first frame would only be drawn after showing, which is the white
+  flash again. Instead the window stays ordered in but undrawn:
+  `alphaValue = 0` (sent with `msg_send!`; objc2-app-kit binds it
+  behind a feature chain-core doesn't enable) and
+  `ignoresMouseEvents = YES`. WebKit kept rendering it (rAF fired,
+  page painted within ~300 ms) and the app launched as usual: active,
+  window key. Done in `setup`, which runs before the run loop commits
+  the first frame (Tauri builds config windows, then calls setup, in
+  one call), so nothing is drawn first. Showing restores alpha in
+  place — no `makeKeyAndOrderFront`, so no activation beyond the
+  launch's own.
+
+## Size, minimum size and Tab focus (lazify requests 11, 12)
+
+- **Minimum size through Tauri's config is off by the title bar.**
+  `min_height: 600` in the window config gave `contentMinSize` 568
+  with a standard bar and 620 with overlay + `large`: tao sets it when
+  the window is created, before Chain's chrome, and AppKit keeps the
+  frame minimum as the bar changes. Set after the chrome in setup
+  (`set_min_size`), the standard bar reads exactly 600. Overlay +
+  `large` still reads 620 — the toolbar's 20 points; not yet dragged
+  by hand.
+- **Size and title through the config work as asked**: 1100×720 opened
+  centred (with `center: true`), page 1100 wide; Tauri reports an
+  inner height of 721.
+- **Tab focus.** With System Settings → Keyboard navigation off
+  (`AppleKeyboardUIMode` unset or 0), WebKit tabs only to text fields
+  and lists. WKPreferences `tabFocusesLinks` (macOS 10.15.4+, Safari's
+  "Press Tab to highlight each item") adds `KeyboardAccessTabsToLinks`,
+  and WebCore's `EventHandler::tabsToAllFormControls` on macOS returns
+  true for that mode unless the key is Option-Tab — so buttons come
+  along with links. `-[WKWebView configuration]` returns a copy, but its
+  `preferences` is the webview's own object: set on the live webview it
+  read back `true`, and WebKit applies preference changes to the page
+  it's showing. A real Tab press wasn't possible here (no Accessibility
+  grant for synthetic keys; `dispatchEvent` doesn't move focus).
+
 ## Not verified
 
 - A physical drag and double-click on `ChainDragView` (no Accessibility
@@ -91,3 +131,6 @@ a borderless window loses its rounded corners, shadow and resize edges.
 - Entering/leaving full screen with real events, `transparent`, `hidden`
   and the theme switch in mneme's own window.
 - Older macOS versions (layouts above are macOS 27's).
+- `minSize` with overlay + `large` by dragging the window edge. (With
+  a standard bar it was dragged by hand in lazify and held; a real Tab
+  press with `tabFocus: "all"` walked lazify's buttons.)

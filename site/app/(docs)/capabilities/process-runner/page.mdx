@@ -68,6 +68,30 @@ const handle = await desktop.processRunner.run("claude", ["-p", "Summarize this 
 });
 ```
 
+### Running in a project folder
+
+Pass `cwd` to run in a folder the user granted with [Folders](/capabilities/folders/), and `env` to add environment
+variables:
+
+```ts
+const handle = await desktop.processRunner.run("npm", ["run", "dev"], onOutput, {
+  cwd: project.path,
+  env: { PORT: "5174" }
+});
+```
+
+### Answering a prompt
+
+With `keepStdinOpen`, you can write to the program while it runs, for example to answer `Overwrite? (y/N)`:
+
+```ts
+const handle = await desktop.processRunner.run("npx", ["create-vite", "app"], (chunk) => {
+  if (chunk.data.includes("(y/N)")) void handle.write("y\n");
+}, { cwd: project.path, keepStdinOpen: true });
+```
+
+Call `handle.closeStdin()` when there's nothing more to send.
+
 ### Passing a stored file
 
 Some programs only take a file path, like `codex exec -i <image>`. Pass a [Files](/capabilities/files/) reference
@@ -97,7 +121,10 @@ Starts `command` with `args` and resolves with a handle **as soon as the process
 - An `args` element can be `{ fileReference }`: it becomes exactly one argument, the stored file's path. An unknown
   reference rejects with `NOT_FOUND` before anything starts.
 - `onOutput` is called with `{ stream, data }` every time the process writes to stdout or stderr.
-- `options.stdin` is written to the process's input and then closed. Leave it out and the process gets no input at all.
+- `options.stdin` is written to the process's input and then closed, unless `keepStdinOpen` is set. Leave both out
+  and the process gets no input at all.
+- `options.cwd` is the folder to run in. It must exist inside a [Folders](/capabilities/folders/) grant.
+- `options.env` adds environment variables over the app's own. A `PATH` here replaces the login-shell `PATH`.
 
 ### `handle.exited`
 
@@ -108,7 +135,14 @@ Resolves once the process ends, however it ends, with `{ code, killed }`. It nev
 
 ### `handle.kill()`
 
-Stops the process. It's safe to call after the process has already exited.
+Stops the process **and everything it started**, such as the server behind `npm run dev`. It asks politely first
+(SIGTERM), forces it after 2 seconds (SIGKILL), and resolves once all of it has exited. If anything is still running
+after 5 seconds it rejects with `TIMEOUT`. It's safe to call after the process has already exited.
+
+### `handle.write(text)` and `handle.closeStdin()`
+
+With `keepStdinOpen`, `write()` sends text to the process's input while it runs, and `closeStdin()` ends the input.
+`write()` rejects with `UNAVAILABLE` if input isn't open, was closed, or the process has exited.
 
 ## Behavior
 
@@ -118,6 +152,7 @@ Stops the process. It's safe to call after the process has already exited.
   chunk the program printed slightly earlier.
 - **Output is text.** Both streams are decoded as UTF-8; invalid bytes become `�`. Binary output isn't supported.
 - **A non-zero exit isn't an error.** `exited` resolves with the real code, and your app decides what it means.
+- **Processes stop when your app quits.** Anything still running is stopped along with what it started.
 - **Large input is safe.** `stdin` is written while output is being read, so multi-megabyte input can't deadlock. If
   the program exits without reading it all, that's not an error either.
 
@@ -127,8 +162,9 @@ Stops the process. It's safe to call after the process has already exited.
 
 | Code                | When                                                         |
 | ------------------- | ------------------------------------------------------------ |
-| `INVALID_ARGUMENT`  | `command` is empty.                                          |
-| `NOT_FOUND`         | No program by that name was found on `PATH`, or a `fileReference` doesn't match a stored file. |
+| `INVALID_ARGUMENT`  | `command` is empty, or `cwd` isn't a folder.                 |
+| `NOT_GRANTED`       | `cwd` is outside every folder the user granted.              |
+| `NOT_FOUND`         | No program by that name was found on `PATH`, `cwd` doesn't exist, or a `fileReference` doesn't match a stored file. |
 | `PERMISSION_DENIED` | The file exists but the OS won't run it.                     |
 | `NATIVE_FAILURE`    | Any other failure to start. `message` has the details.       |
 | `UNSUPPORTED`       | Called outside a Chain app.                                  |
@@ -145,7 +181,6 @@ try {
 
 - **No shell, ever.** Pipes, globbing, `&&`, and variable expansion don't exist here. Run the program you want directly.
 - **No allowlist or permission prompts.** Your app decides which commands are acceptable to run.
-- **No interactive processes.** Input is a single `stdin` payload; there's no way to write more later, and no terminal
-  emulation.
-- **No custom working directory or environment variables yet.** The process inherits the app's own.
-- **`kill()` stops the process itself,** not necessarily the programs it started.
+- **No terminal.** Input is a pipe, not a TTY, so full-screen programs won't work here. Use
+  [Terminal](/capabilities/terminal/) for those.
+- **Programs that deliberately detach** (daemonize, or start a new session) aren't stopped by `kill()`.

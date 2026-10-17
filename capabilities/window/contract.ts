@@ -60,6 +60,49 @@ export interface WindowOptions {
   backgroundColor?: string | null;
 }
 
+/**
+ * When the window first appears at launch:
+ * - `immediately`: as soon as the app starts, before the page has drawn anything.
+ * - `firstPaint`: once the page has drawn its first frame and loaded @chain/sdk.
+ * - `showCalled`: when the page calls show().
+ * Either way it shows when showTimeout runs out. Only the first appearance:
+ * reloads never hide the window again.
+ */
+export type ShowWhen = "immediately" | "firstPaint" | "showCalled";
+
+/** In CSS pixels at 100% page zoom: the area the page gets, not counting a standard title bar. */
+export interface WindowSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Which elements Tab moves focus to:
+ * - `all`: every focusable element (buttons, links, form fields, anything with a tabindex), as in Chromium.
+ * - `system`: what the OS setting says. On macOS, with Keyboard navigation off (its default), only text fields and lists.
+ */
+export type TabFocus = "all" | "system";
+
+/**
+ * package.json's `"chain": { "window": { ... } }`: the window's chrome for
+ * the first frame, plus what only applies at startup — so setOptions()
+ * doesn't take these.
+ */
+export interface WindowStartupOptions extends WindowOptions {
+  /** Defaults to "immediately". A platform that can't do the mode shows immediately. */
+  showWhen?: ShowWhen | null;
+  /** Milliseconds after which the window shows whatever showWhen says. Defaults to 3000. */
+  showTimeout?: number | null;
+  /** The size the window opens at, centred on the screen. Defaults to the native project's (800×600). */
+  size?: WindowSize | null;
+  /** The smallest the user can resize the window to. Defaults to no minimum. */
+  minSize?: WindowSize | null;
+  /** The window's title: the title bar, the Window menu, Mission Control. Defaults to the project name. */
+  title?: string | null;
+  /** Defaults to "system". */
+  tabFocus?: TabFocus | null;
+}
+
 /** The options in effect — after defaults, and after options this platform can't do fell back. */
 export interface ResolvedWindowOptions {
   titleBarStyle: TitleBarStyle;
@@ -114,6 +157,8 @@ export interface WindowAvailability {
   /** insets() reports where the system chrome is (otherwise it's all zero). */
   titleBarInsets: boolean;
   fullScreen: boolean;
+  /** Which showWhen modes work here; the others show immediately. */
+  showWhen: Record<ShowWhen, boolean>;
 }
 
 export type WindowUnsubscribe = () => void;
@@ -129,6 +174,12 @@ export interface WindowApi {
   onInsetsChange(listener: (insets: TitleBarInsets) => void): WindowUnsubscribe;
   isFullScreen(): Promise<boolean>;
   onFullScreenChange(listener: (fullScreen: boolean) => void): WindowUnsubscribe;
+  /** Shows the window if it hasn't appeared yet; otherwise does nothing. Safe to call any time. */
+  show(): Promise<void>;
+  /** Whether the window has appeared yet. Stays true once it has (minimising doesn't change it). */
+  isShown(): Promise<boolean>;
+  /** Once, when the window first appears. Check isShown() first: it doesn't fire for a window already shown. */
+  onShown(listener: () => void): WindowUnsubscribe;
   /** Moves the window with the pointer, as dragging the title bar does. Call it from a primary-button pointerdown/mousedown. */
   startDrag(): Promise<void>;
 }

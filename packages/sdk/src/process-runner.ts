@@ -3,17 +3,20 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   ProcessArg,
+  ProcessByteHandler,
   ProcessExit,
   ProcessHandle,
   ProcessOutputHandler,
   ProcessRunOptions,
   ProcessRunnerApi
 } from "./contracts/process-runner";
-import { chainError } from "./errors";
+import { chainError, type ChainErrorCode } from "./errors";
 
 const INVALID_ARGUMENT_PREFIX = "INVALID_ARGUMENT: ";
 const NOT_FOUND_PREFIX = "NOT_FOUND: ";
 const PERMISSION_DENIED_PREFIX = "PERMISSION_DENIED: ";
+// A `cwd` is checked against desktop.folders' grants, and kill() can time out.
+const OTHER_CODES: ChainErrorCode[] = ["NOT_GRANTED", "UNAVAILABLE", "TIMEOUT"];
 
 function requireTauri(method: string): void {
   if (!isTauri()) {
@@ -35,6 +38,8 @@ function toChainError(error: unknown, fallback: string) {
     if (error.startsWith(PERMISSION_DENIED_PREFIX)) {
       return chainError("PERMISSION_DENIED", error.slice(PERMISSION_DENIED_PREFIX.length));
     }
+    const code = OTHER_CODES.find((candidate) => error.startsWith(`${candidate}: `));
+    if (code) return chainError(code, error.slice(code.length + 2));
   }
   return chainError("NATIVE_FAILURE", typeof error === "string" ? error : fallback);
 }
@@ -42,7 +47,9 @@ function toChainError(error: unknown, fallback: string) {
 interface ProcessOutputEvent {
   id: string;
   stream: "stdout" | "stderr";
-  data: string;
+  data?: string;
+  /** Base64, with `output: "bytes"`. */
+  bytes?: string;
 }
 
 interface ProcessExitEvent {
@@ -52,7 +59,7 @@ interface ProcessExitEvent {
 }
 
 interface PendingProcess {
-  onOutput: ProcessOutputHandler;
+  onOutput: ProcessOutputHandler | ProcessByteHandler;
   resolveExit: (exit: ProcessExit) => void;
 }
 
@@ -67,7 +74,11 @@ async function ensureListeners(): Promise<void> {
   if (!listenersReady) {
     listenersReady = Promise.all([
       listen<ProcessOutputEvent>("chain://process-output", (event) => {
-        pending.get(event.payload.id)?.onOutput({ stream: event.payload.stream, data: event.payload.data });
+        const { id, stream, data, bytes } = event.payload;
+        const onOutput = pending.get(id)?.onOutput;
+        if (!onOutput) return;
+        if (bytes === undefined) (onOutput as ProcessOutputHandler)({ stream, data: data ?? "" });
+        else (onOutput as ProcessByteHandler)({ stream, data: decodeBase64(bytes) });
       }),
       listen<ProcessExitEvent>("chain://process-exit", (event) => {
         const entry = pending.get(event.payload.id);
@@ -78,6 +89,13 @@ async function ensureListeners(): Promise<void> {
     ]).then(() => undefined);
   }
   return listenersReady;
+}
+
+function decodeBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function generateProcessId(): string {
@@ -91,7 +109,7 @@ export const processRunner: ProcessRunnerApi = {
   async run(
     command: string,
     args: ProcessArg[],
-    onOutput: ProcessOutputHandler,
+    onOutput: ProcessOutputHandler | ProcessByteHandler,
     options?: ProcessRunOptions
   ): Promise<ProcessHandle> {
     requireTauri("run");
@@ -114,7 +132,16 @@ export const processRunner: ProcessRunnerApi = {
     pending.set(id, { onOutput, resolveExit: exitResolve });
 
     try {
-      await invoke<void>("process_runner_run", { id, command, args, stdin: options?.stdin });
+      await invoke<void>("process_runner_run", {
+        id,
+        command,
+        args,
+        stdin: options?.stdin,
+        keepStdinOpen: options?.keepStdinOpen,
+        cwd: options?.cwd,
+        env: options?.env,
+        bytes: options?.output === "bytes"
+      });
     } catch (error) {
       pending.delete(id);
       throw toChainError(error, "processRunner.run() failed");
@@ -130,7 +157,28 @@ export const processRunner: ProcessRunnerApi = {
           throw toChainError(error, "processRunner kill() failed");
         }
       },
+      async write(text: string): Promise<void> {
+        requireTauri("write");
+        try {
+          await invoke<void>("process_runner_write", { id, text });
+        } catch (error) {
+          throw toChainError(error, "processRunner write() failed");
+        }
+      },
+      async closeStdin(): Promise<void> {
+        requireTauri("closeStdin");
+        await invoke<void>("process_runner_close_stdin", { id });
+      },
       exited
     };
+  },
+
+  async launch(command: string, args: string[]): Promise<void> {
+    requireTauri("launch");
+    try {
+      await invoke<void>("process_runner_launch", { command, args });
+    } catch (error) {
+      throw toChainError(error, "processRunner.launch() failed");
+    }
   }
 };

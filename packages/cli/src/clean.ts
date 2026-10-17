@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { checkChainApp, nativeProjectDir, sharedDevTargetDir } from "./nativeProject.js";
+import { nativeProjectDir, prepareChainApp, sharedDevTargetDir } from "./nativeProject.js";
 
 // Past this, `chain dev`/`chain build` print a one-line hint pointing at
 // `chain clean`. Cargo never deletes stale artifacts on its own (no stable
@@ -82,7 +82,7 @@ export function clean(args: string[]): void {
     return;
   }
 
-  checkChainApp(cwd);
+  prepareChainApp(cwd);
   const manifest = path.join(nativeProjectDir(cwd), "Cargo.toml");
   const ownTarget = path.join(nativeProjectDir(cwd), "target");
   const before = fs.existsSync(ownTarget) ? directorySize(ownTarget) : 0;

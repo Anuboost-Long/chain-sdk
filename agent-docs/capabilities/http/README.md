@@ -100,6 +100,17 @@ const reference = await desktop.files.write(image.data, "png");
 u32 length, the response head as JSON, then the body
 (`chain_core::http::request_bytes`, unpacked by `unframe()` in the SDK).
 
+A local dev server with a self-signed certificate (lazify-chain
+request 19):
+
+```ts
+await desktop.http.get("https://localhost:5001/api", { trustLoopbackCertificates: true });
+```
+
+Only loopback hosts skip verification — the flag is ignored for any other
+host, and a redirect off loopback rejects (`is_loopback()` and
+`loopback_only_redirects()` in `http.rs`).
+
 Every already-scaffolded app gets this automatically via `chain update`
 (it's a tracked file in `packages/cli/templates/lib.rs`) — no manual
 wiring needed per app.

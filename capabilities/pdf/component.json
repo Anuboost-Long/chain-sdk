@@ -1,0 +1,16 @@
+{
+  "name": "pdf",
+  "description": "Render an HTML document off-screen into a paginated PDF in the app's files: paper, margins, orientation, CSS page breaks, backgrounds, header/footer with page numbers, light colour scheme, metadata.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/pdf/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

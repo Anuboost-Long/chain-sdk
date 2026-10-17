@@ -12,15 +12,26 @@ to see what actually exists vs. what's just planned.
 | Http            | 🧪    | ⏳      | ⏳    | Draft    |
 | AgentServer     | 🧪    | ⏳      | ⏳    | Draft    |
 | ProcessRunner   | 🧪    | ⏳      | ⏳    | Draft    |
+| Folders         | 🧪    | ⏳      | ⏳    | Draft    |
+| Terminal        | 🧪    | ⏳      | ⏳    | Draft    |
+| Ports           | 🧪    | ⏳      | ⏳    | Draft    |
+| Attention       | ⚠     | ⏳      | ⏳    | Draft    |
+| PageZoom        | 🧪    | ⏳      | ⏳    | Draft    |
+| KeepAwake       | 🧪    | ⏳      | ⏳    | Draft    |
 | Microphone      | 🧪    | ⏳      | ⏳    | Draft    |
 | Vision          | 🧪    | ⚠       | ⏳    | Draft    |
 | Speech          | 🧪    | ⏳      | ⏳    | Draft    |
 | Models          | 🧪    | ⏳      | ⏳    | Draft    |
+| Packages        | 🧪    | ⏳      | ⏳    | Draft    |
 | Tts             | 🧪    | ⏳      | ⏳    | Draft    |
 | AudioRecorder   | 🧪    | ⏳      | ⏳    | Draft    |
 | Browser         | 🧪    | ⚠       | ⏳    | Draft    |
+| BrowserView     | 🧪    | ⏳      | ⏳    | Draft    |
+| Updates         | 🧪    | ⏳      | ⏳    | Draft    |
 | Embeddings      | 🧪    | ⏳      | ⏳    | Draft    |
 | Window          | 🧪    | ⚠       | ⚠     | Draft    |
+| Pdf             | 🧪    | ⏳      | ⏳    | Draft    |
+| Share           | 🧪    | ⏳      | ⏳    | Draft    |
 
 Legend:
 
@@ -66,7 +77,11 @@ HTML body) and that a non-2xx response resolves rather than rejects
 (`agent-docs/capabilities/http/research/WINDOWS.md` has the specific
 risk to check first: whether the OS certificate store is actually
 consulted the way `native-tls`/SChannel is documented to on a real
-managed-machine proxy/root-cert setup).
+managed-machine proxy/root-cert setup). Since 2026-10-15 a request can
+opt into `trustLoopbackCertificates` for a self-signed local dev server
+(lazify-chain request 19) — verified on macOS (unit tests, and in
+lazify-chain's running app against a real self-signed certificate), not
+yet on Windows.
 
 `agent-server` (a local `127.0.0.1`-only HTTP listener forwarding
 requests to a JS handler, so an external AI agent process can call into
@@ -99,6 +114,48 @@ candidate fixes documented, none implemented yet). Native stays
 deliberately generic — no AI-CLI/output-format awareness, and no
 compiled-in executable allowlist (that's Phase 28's job) — see that
 capability's `CONTRACT.md` for why.
+
+Lazify's request 03 extended `process-runner` with `cwd` (checked
+against `folders` grants), `env`, `keepStdinOpen` plus `handle.write()`,
+and a `kill()` that stops the whole process tree (SIGTERM, then SIGKILL
+after 2 s, `TIMEOUT` at 5 s), all verified on macOS through a real app.
+Windows' tree kill is `taskkill /T /F`, written but never run.
+
+`folders` (Lazify requests 01 and 02, and Mneme's request 11) gives real
+paths inside folders the user picked or dropped (read-write, persisted)
+and folders the app declares read-only in `package.json`
+(`chain.readOnlyFolders`), with every path checked natively. It's
+verified end to end on macOS: listing, reads, byte ranges, atomic
+writes, moves, Trash, watching, and the picker. Drag-and-drop granting
+and a real privacy-protection denial weren't exercised. Lazify's request 06 added `appFolder("data" | "temp")`, the
+app's own read-write folders with real paths, verified with a shadow
+`git --git-dir` repo run through `process-runner`. Request 14 made
+`move()` copy across volumes (links and modes kept), verified with a
+`node_modules` tree moved onto a mounted disk image. Windows isn't
+started (`research/WINDOWS.md`).
+
+`terminal` (Lazify request 04) runs programs in a pseudo-terminal owned
+by Chain Core. Verified on macOS: a session kept running through a real
+page reload, and `attach()` replayed its output contiguously from the
+new page. Windows (ConPTY through `portable-pty`) is unverified.
+
+`ports` (Lazify request 05) answers whether a dev server could bind a
+TCP port now, by binding it on `0.0.0.0`, `127.0.0.1`, `::` and `::1`.
+Verified on macOS against real Node servers on `::1` and `127.0.0.1`,
+both of which an Electron-style `0.0.0.0` probe misses.
+
+`attention` (Lazify request 07) is Partial on macOS. Focus, focus
+changes and the Dock bounce work and are verified. Notifications are
+implemented (`UNUserNotificationCenter`), but they work only in a
+`chain build` app, and on the development machine macOS refused every
+ad-hoc-signed test bundle (`UNErrorDomain` 1). The shown/click path is
+unverified, and the refusal surfaces as `{ outcome: "failed", message }`.
+
+`page-zoom` (Lazify request 08) is the webview's own page zoom,
+verified on macOS to reflow and scale `devicePixelRatio` and to survive
+a reload. `keep-awake` (request 09) is one IOKit power assertion,
+verified with `pmset` to appear, be replaced, disappear on `stop()`, and
+be released when the app is killed.
 
 `files.pick()` (mneme request 16 — the OS open panel attached to the
 app window as a sheet, returning names and bytes, never paths),
@@ -145,6 +202,13 @@ sherpa-onnx) is verified on macOS end to end in `apps/playground`,
 including an hour-long transcription with Moonshine tiny-en. The Windows
 archive is pinned but has never been built there.
 
+`packages` (Lazify request 17 — `desktop.packages` install/resolve/
+cancel/list/remove) reuses the models store for archives the app runs
+from, returning their paths. Verified on macOS in a `chain init` app
+against Open VSX: Tailwind CSS IntelliSense installed with progress,
+SonarLint cancelled mid-download, integrity failure, nothing left behind.
+Never run on Windows (plain Rust, nothing per-OS).
+
 `tts` (request 21 part 2 — `voices`/`synthesize` with Kokoro/Piper, plus
 `compile` for audiobook mode: one AAC file with per-segment timings) is
 verified on macOS end to end; `compile` is `UNSUPPORTED` on Windows until
@@ -184,6 +248,32 @@ forged press from the page refused), sign out open and closed. Windows is
 ⚠: the same Tauri code compiles for it but has never run there
 (`agent-docs/capabilities/browser/research/WINDOWS.md` has the checklist).
 
+`browser-view` (lazify request 18 — other sites embedded in the app's own
+window, on named persistent sessions, with navigation and new windows
+decided by the app) is verified on macOS 27 in `apps/playground`'s dev
+build against a local two-origin test site and a person clicking:
+placement under page zoom, held/allowed/refused/timed-out navigations,
+redirects asked once, nested-frame top navigation, new windows (including
+open-then-address-later), load-failure reasons, crash and reload, session
+sharing and isolation, permissions refused without a prompt, real-input
+modifiers/button/input age, and the pruned context menu. Not yet seen:
+a trackpad swipe, element fullscreen, Inspect Element. Windows is not
+started (`agent-docs/capabilities/browser-view/AGENTS.md`).
+Request 21 added per-session rules (content-blocker style: block, hide,
+exceptions — verified in cross-origin frames, with the compiled cache
+surviving relaunch), early page scripts with an `ask()` channel back to
+the app, and `runInFrames()` (every frame, cross-origin included, as a
+user gesture — picture-in-picture verified, behind the opt-in
+`allowPictureInPicture`, which uses an unpublished WebKit preference).
+
+`updates` (lazify request 22 — the built app updates itself) is verified
+on macOS 27 with a `chain init` test app: install-on-quit and
+`installAndRelaunch()` (atomic swap), Ed25519-signed feed with tampered
+archive and lying feed both refused, `read-only` detection, and macOS
+permissions across updates — lost every update when ad-hoc signed, kept
+when signed with a stable (even self-signed) certificate. Windows not
+started.
+
 `embeddings` (request 37 — sentence vectors for search by meaning, from a
 downloaded ONNX model and its Hugging Face tokenizer, on the ONNX Runtime
 sherpa-onnx already links) is verified on macOS arm64: against Python
@@ -202,8 +292,16 @@ on the first frame, the native bar sizes (32/40/52) with buttons where
 AppKit puts them through repeated zooms, a custom button position held
 through zooms and reset, click routing by AppKit hit-testing (drag areas
 to the native drag view, page and window buttons to themselves), and the
-window colour behind the page. A physical drag/double-click and full
-screen with real events are still to be confirmed. Windows and Linux are
-⚠: only the portable subset (standard/hidden, appearance, background,
-drag, full screen) applies, through Tauri's own calls, never run there
-(`agent-docs/capabilities/window/research/WINDOWS.md`).
+window colour behind the page. Request 40's `showWhen` (`firstPaint` /
+`showCalled` with a `showTimeout`) is verified there too: the window
+stays undrawn while the page paints, then appears drawn, in front and
+focused; reloads never hide it. A physical drag/double-click, full
+screen with real events, and a person watching a real launch for a
+white frame are still to be confirmed. Windows and Linux are ⚠: only
+the portable subset (standard/hidden, appearance, background, drag,
+full screen) applies, `showWhen` falls back to `immediately`, through Tauri's own calls, never run there
+(`agent-docs/capabilities/window/research/WINDOWS.md`). Lazify's requests 11 and 12 added
+startup-only `size`, `minSize`, `title` and `tabFocus`: size, centring,
+title, the minimum (standard bar) and WebKit's `tabFocusesLinks` read
+back right on macOS 27, and in lazify a hand drag stopped at the
+minimum and a real Tab press walked its buttons.

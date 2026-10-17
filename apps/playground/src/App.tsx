@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import chainIcon from "../../../asset/app-icon.svg";
 import "./App.css";
+import { dismissLaunchScreen } from "./launchScreen";
 
 type Status =
   { kind: "loading" } | { kind: "ready"; info: PlatformInfo } | { kind: "error"; message: string };
@@ -15,6 +16,10 @@ const LAYERS = ["React", "Chain SDK", "Chain Core (Rust)", "Tauri runtime"] as c
 
 function App() {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
+
+  useEffect(() => {
+    if (status.kind !== "loading") void dismissLaunchScreen();
+  }, [status.kind]);
 
   useEffect(() => {
     desktop.platform

@@ -27,13 +27,38 @@ production path. No macOS-specific reasoning needed here either; two
 blocking `Read::read()` loops on two plain `std::thread::spawn` threads
 is portable.
 
-## Killing a process
+## Killing a process — and everything it started
 
-`std::process::Child::kill()` is already a portable, cross-platform
-method in the standard library — sends `SIGKILL` on Unix, calls
-`TerminateProcess` on Windows. No per-OS code needed for `kill()`
-itself; see `research/WINDOWS.md` for the actual platform-divergent risk
-(which is about *spawning*, not killing).
+Originally `Child::kill()` (SIGKILL to the one pid). Lazify's request 03
+showed why that isn't enough: `npm run dev`, `dotnet watch` and
+`npx create-*` are wrappers, and killing only the wrapper orphans the
+child that holds the dev port ("address already in use" on restart).
+
+Now (`crates/core/src/process_tree.rs`):
+
+- `CommandExt::process_group(0)` (stable since Rust 1.64) makes the child
+  the leader of a new group, `pgid == pid`. Its children inherit the
+  group unless they call `setsid`/`setpgid` themselves.
+- `kill()` is `killpg(pgid, SIGTERM)`, then polls `killpg(pgid, 0)` every
+  20 ms; at 2 s it sends `SIGKILL` to the group, and at 5 s it gives up
+  with `TIMEOUT`. `killpg(pgid, 0)` keeps succeeding while any member
+  exists, a zombie included, so the waiter thread now calls
+  `child.wait()` *first* (it used to drain the pipes first): the leader
+  is reaped straight away and the group empties as soon as its real
+  members are gone. Output isn't lost by reaping early; the pipes stay
+  readable, and `on_exit` still waits for both to hit EOF.
+- A pgid can't be reused while any member of the group is alive, so
+  signalling a group that still answers `killpg(pgid, 0)` is safe. Once
+  it's fully gone the number could in theory be reused before a late,
+  idempotent `kill()`; that needs a whole pid wrap-around and is
+  accepted.
+- Side effect: being in its own group, the child no longer gets the
+  terminal's Ctrl-C or `chain dev`'s SIGTERM to the app's group. Normal
+  quit kills every tracked process (`RunEvent::Exit`); a signal-killed
+  app leaves them running.
+- Verified: `sh -c 'sleep 60 & echo $!; wait'` stops in ~120 ms and the
+  `sleep` pid is gone; a child ignoring SIGTERM (`trap '' TERM`) dies at
+  the grace period from SIGKILL.
 
 ## GUI-launched apps don't get the login-shell `PATH`
 
@@ -157,3 +182,31 @@ file's absolute path as exactly one argv element.
 - The path is passed through `Command::args` like every other element —
   no shell, no quoting, spaces in `~/Library/Application Support/...`
   are fine.
+
+## Launching a program that outlives the app (request 15)
+
+`launch()` starts a program with `setsid()` in `pre_exec`, so it leads a
+new session and process group. That puts it out of reach of everything
+that stops the app on macOS:
+
+- Quit-time cleanup only kills `run()` processes it tracks; `launch()`
+  isn't tracked.
+- `chain dev` (restart or Ctrl-C) signals the app's process group with
+  `kill(-pid)`; a new session is a different group.
+- A terminal closing sends SIGHUP to its foreground group; a new session
+  has no controlling terminal.
+- An app crash kills nothing on its own: children are re-parented to
+  launchd. The waiter thread that reaps it dies with the app, which is
+  fine, since launchd then reaps it.
+
+stdin/stdout/stderr are `/dev/null`, not pipes, so the program never
+gets SIGPIPE or EOF surprises when the app's ends close.
+
+`pre_exec` makes Rust use `fork`+`exec` instead of `posix_spawn`; spawn
+errors (ENOENT, EACCES) still come back through `spawn()`, so `NOT_FOUND`
+works as for `run()`. Verified 14 October 2026, see AGENTS.md.
+
+TCC note, not verified: macOS attributes a child's privacy prompts to
+the "responsible" app, so an IDE launched this way may show Lazify's name
+in a permission prompt. Electron's `spawn({ detached: true })` has the
+same behavior.

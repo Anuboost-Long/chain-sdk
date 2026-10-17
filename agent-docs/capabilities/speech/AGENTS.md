@@ -41,6 +41,17 @@ for Phase 17.
 - [~] Legacy `SFSpeechRecognizer` path: authorization prompt and the
   "Dictation disabled" error observed; a successful transcription on
   pre-26 macOS isn't verified (no such machine here).
+- [x] Video files and Opus (request 39), macOS 26.6, 6 Oct 2026. In
+      `cargo test`, with CHAIN_TEST_SYSTEM_SPEECH and
+      CHAIN_TEST_SPEECH_MODELS=<app models dir> set, the same sentence was
+      transcribed word for word from MP4/MOV/M4V AAC, WebM/MKV Opus, a
+      duration-less browser WebM and Ogg .opus/.ogg, on the system engine
+      and on whisper-base. A silent MP4 is `NOT_FOUND` on both. A 20-min
+      WebM took 11.5 s, with paced progress and timestamps continuous to
+      1183 s. Cancelling the decoded path mid-run is clean. The same was
+      run end to end through `desktop.speech` in the playground.
+- [~] Legacy path with decoded sound (`SFSpeechAudioBufferRecognitionRequest`):
+      compiled, not run (no pre-26 Mac).
 - [ ] Model download from scratch (en-US was already installed here).
 - [ ] Windows: deliberately `UNSUPPORTED` — WinRT speech can't take a file;
       options in research/WINDOWS.md.

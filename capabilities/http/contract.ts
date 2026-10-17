@@ -34,6 +34,12 @@ export interface HttpRequestConfig {
   maxBytes?: number;
   /** Which statuses resolve; any other rejects HTTP_ERROR. Defaults to 200–299. `() => true` resolves every response. */
   validateStatus?: (status: number) => boolean;
+  /**
+   * When the URL's host is loopback (localhost, *.localhost, 127.x.x.x, ::1, 0.0.0.0),
+   * accept its certificate unverified — a local dev server's self-signed one. Every
+   * other host is verified as usual; a redirect off loopback rejects. Defaults to false.
+   */
+  trustLoopbackCertificates?: boolean;
 }
 
 export interface HttpResponse<T = unknown> {

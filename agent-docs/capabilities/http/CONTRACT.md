@@ -104,6 +104,34 @@ Until 1 October 2026 every response resolved and callers checked `ok`;
 mneme asked for axios's default so HTTP errors land in the same `catch`
 as network failures (request 27).
 
+### Local dev servers — `trustLoopbackCertificates` (lazify-chain request 19)
+
+```ts
+await desktop.http.get("https://localhost:5001/weatherforecast", { trustLoopbackCertificates: true });
+```
+
+A local dev server often serves a self-signed certificate (`dotnet
+dev-certs https` and the like) that ordinary verification refuses. With
+`trustLoopbackCertificates: true`:
+
+- If the URL's host is loopback — `localhost`, `*.localhost`,
+  `127.0.0.0/8`, `::1`, `0.0.0.0` or `::` — its certificate is accepted
+  without verification: self-signed, expired, or naming another host.
+- Any other host is verified exactly as without the flag. Chain makes the
+  loopback decision itself, so an app can pass the flag on every request
+  of a feature (API Studio's runner) and remote hosts stay safe.
+- A redirect from the loopback host to a non-loopback one **rejects**
+  (`NATIVE_FAILURE`, "redirected off loopback to …") instead of
+  following, because the unverified connection settings would carry over
+  to it. Redirects that stay on loopback follow as usual.
+- Defaults to `false`; no other behavior changes. Applies to text and
+  bytes requests alike.
+
+The host is judged by its name, not by what it resolves to: `localhost`
+and `*.localhost` count as loopback even if a hosts file points them
+elsewhere (RFC 6761 reserves them for loopback; Electron's `tls-trust.ts`
+judges them the same way).
+
 ## Errors
 
 - `HTTP_ERROR` — a response came back, but `validateStatus` refused its
@@ -135,3 +163,6 @@ The rest reject when there's **no** HTTP response at all:
   want those.
 - **No redirect-chain inspection** — only the final response is seen.
 - **No caching and no rate limiting.**
+- **No certificate exceptions beyond loopback.** No pinning, no custom
+  CA, no "trust this certificate" memory, and nothing that relaxes
+  verification for a non-loopback host.

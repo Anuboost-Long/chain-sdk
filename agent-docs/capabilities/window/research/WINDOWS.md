@@ -25,6 +25,16 @@ bottom.
 `availability()` reports exactly this (portable logic in
 `chain_core::window::availability`, `TitleBarStyle::supported`).
 
+## `showWhen` (request 40)
+
+Not done: `firstPaint` and `showCalled` fall back to `immediately` and
+`availability().showWhen` says so. To add it: Windows has no alpha-0
+equivalent through Tauri (it needs `WS_EX_LAYERED` +
+`SetLayeredWindowAttributes`), and WebView2 in a hidden window may stop
+producing frames (Chromium occlusion tracking), so `hide()`/`show()`
+alone would likely still show an unpainted frame. Check both before
+turning the flags on. Linux (WebKitGTK) has the same open question.
+
 ## Known risks
 
 - `set_decorations(false)` at startup happens in setup, after Tauri

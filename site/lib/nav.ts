@@ -70,6 +70,36 @@ export const nav: NavSection[] = [
         title: "Process runner",
         href: "/capabilities/process-runner/",
         description: "desktop.processRunner — run a program and stream its output as it prints."
+      },
+      {
+        title: "Folders",
+        href: "/capabilities/folders/",
+        description: "desktop.folders — work with real files in folders the user chose."
+      },
+      {
+        title: "Terminal",
+        href: "/capabilities/terminal/",
+        description: "desktop.terminal — interactive programs in a real terminal that survive a reload."
+      },
+      {
+        title: "Ports",
+        href: "/capabilities/ports/",
+        description: "desktop.ports — check whether a local TCP port is free."
+      },
+      {
+        title: "Attention",
+        href: "/capabilities/attention/",
+        description: "desktop.attention — notify the user and bounce the Dock while the app is in the background."
+      },
+      {
+        title: "Page zoom",
+        href: "/capabilities/page-zoom/",
+        description: "desktop.pageZoom — zoom the page like a browser, with real reflow."
+      },
+      {
+        title: "Keep awake",
+        href: "/capabilities/keep-awake/",
+        description: "desktop.keepAwake — stop the computer sleeping while your app works."
       }
     ]
   },

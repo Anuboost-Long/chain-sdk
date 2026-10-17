@@ -14,10 +14,21 @@ process, reads stdout and stderr on two dedicated threads (each chunk
 of bytes read is forwarded to `on_output` as soon as it's available,
 tagged `stdout`/`stderr`), and calls `on_exit` exactly once, after both
 pipes hit EOF and the process has actually exited. Returns a
-`ProcessHandle` immediately once spawned, whose `kill()` is a thin
-wrapper over `std::process::Child::kill()` (already portable —
-`SIGKILL` on Unix, `TerminateProcess` on Windows, no per-OS code
-needed).
+`ProcessHandle` immediately once spawned. Each process leads its own
+process group, and `kill()` stops the whole tree through
+`chain_core::process_tree` (SIGTERM to the group, SIGKILL after 2 s,
+`TIMEOUT` if anything outlives 5 s; `taskkill /T /F` on Windows), so a
+wrapper like `npm run dev` doesn't leave its server holding the port.
+`process_runner_kill` runs it off the main thread. Processes still
+running when the app quits normally are killed (`RunEvent::Exit` in
+`templates/lib.rs`).
+
+`RunOptions` also carries `cwd` (checked against `desktop.folders`
+grants in `templates/lib.rs` before `run()` is called), `env` (set after
+the login-shell `PATH`, so it can override it) and `keep_stdin_open`.
+All stdin, the one-shot payload included, goes through a single writer
+thread fed by a channel; `handle.write()` sends to it, and
+`closeStdin()` drops the last sender, which closes stdin.
 
 On macOS/Linux, `run()` substitutes the user's real login-shell `PATH`
 (resolved once, on first use, by spawning `$SHELL -lic 'echo
@@ -96,8 +107,41 @@ await desktop.processRunner.run("claude", ["-p", task], onOutput, { stdin: cours
 const image = await desktop.files.write(pngBytes, { extension: "png" });
 await desktop.processRunner.run("codex", ["exec", "-i", { fileReference: image }, prompt], onOutput);
 
-// To stop it early (e.g. a chat UI's "stop generating" button):
+// To stop it early (e.g. a chat UI's "stop generating" button). This
+// stops everything it started too, and resolves once all of it is gone:
 await handle.kill();
+
+// In a project folder the user granted (desktop.folders), with extra env:
+const install = await desktop.processRunner.run("npm", ["install"], onOutput, {
+  cwd: project.path,
+  env: { PORT: "5174" }
+});
+
+// Answering a prompt while it runs:
+const scaffold = await desktop.processRunner.run("npx", ["create-vite", "app"], (chunk) => {
+  if (chunk.data.includes("(y/N)")) void scaffold.write("y\n");
+}, { cwd: project.path, keepStdinOpen: true });
+```
+
+A program that frames its output by byte count (a language server over
+stdio: `Content-Length` headers) reads it as raw bytes instead of text:
+
+```ts
+const server = await desktop.processRunner.run("tailwindcss-language-server", ["--stdio"], (chunk) => {
+  // chunk.data is a Uint8Array: exactly the bytes read, nothing decoded
+}, { output: "bytes", keepStdinOpen: true });
+```
+
+Text output never breaks a character split across two reads, so joining
+a stream's chunks always gives the same text as decoding all of it.
+
+A program the app should never stop — the user's editor, opened from an
+"Open in editor" action — is started with `launch()` instead. It resolves
+once the program has started and outlives the app however it ends
+(quit, crash, `chain dev` restart). No output, no handle:
+
+```ts
+await desktop.processRunner.launch("code", [folder, "-g", `${file}:${line}`]);
 ```
 
 A nonexistent command rejects instead of resolving:
@@ -120,12 +164,17 @@ wiring needed per app.
   contract, especially "The two open design questions" (no AI-CLI
   awareness, no compiled-in executable allowlist — that's Phase 28's
   job), `options.stdin` (one-shot payload, EPIPE isn't an error) and
-  the Non-goals (no shell interpretation ever, no interactive stdin/PTY, no
-  line-buffering, no stream-interleaving guarantee). Check this before
+  `cwd`/`env`, `keepStdinOpen`/`write()`, the tree-killing `kill()`, and
+  `output: "bytes"`, and the Non-goals (no shell interpretation ever,
+  no PTY, no line-buffering, no stream-interleaving guarantee). Check this before
   changing behavior.
+- `crates/core/src/process_tree.rs` — process groups, the SIGTERM →
+  SIGKILL → give-up escalation, and Windows' `taskkill /T`. Shared with
+  `terminal`. `leave_the_app` is the opposite, for `launch()`: a new
+  session (`setsid`) on Unix, a detached process on Windows.
 - `capabilities/process-runner/contract.ts` — the exact types
-  (`ProcessRunnerApi`, `ProcessRunOptions`, `ProcessHandle`,
-  `ProcessOutputChunk`, `ProcessExit`); change this and every implementation below together,
+  (`ProcessRunnerApi` with its two `run` overloads, `ProcessRunOptions`,
+  `ProcessHandle`, `ProcessOutputChunk`/`ProcessByteChunk`, `ProcessExit`); change this and every implementation below together,
   never one without the others.
 - `agent-docs/capabilities/process-runner/AGENTS.md` — what's already
   decided and why (especially the client-side-id race-avoidance
@@ -138,7 +187,7 @@ wiring needed per app.
   the way `cmd.exe` does. Three candidate fixes are documented, none
   chosen yet — read before touching the spawn path on Windows.
 - `crates/core/src/process_runner.rs` — the actual Rust implementation
-  (`run()`, `ProcessHandle`, `ProcessExit`, `ProcessRunnerError`). Has
+  (`run()`, `launch()`, `ProcessHandle`, `ProcessExit`, `ProcessRunnerError`). Has
   real unit tests (`cargo test -p chain-core`) including a genuine
   timing-based proof that output arrives incrementally, not buffered to
   exit — extend tests here rather than only through the Tauri layer.
@@ -148,7 +197,8 @@ wiring needed per app.
   native `process_runner_run` command — see its comments for why getting
   this ordering backwards would silently lose fast processes' output.
 - `packages/cli/templates/lib.rs` — the Tauri command/event layer
-  (`process_runner_run`/`process_runner_kill`, `ProcessRunnerState`)
+  (`process_runner_run`/`process_runner_kill`, `ProcessRunnerState`;
+  `process_runner_launch` deliberately stays out of that state)
   that every scaffolded app gets. This is the file `chain update`
   propagates — see `agent-docs/framework/command/README.md`.
 - `apps/playground/src-tauri/src/lib.rs` — same wiring, kept in sync by

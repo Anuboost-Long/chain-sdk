@@ -23,11 +23,13 @@ const NOTHING_AVAILABLE: WindowAvailability = {
   dragRegions: false,
   startDrag: false,
   titleBarInsets: false,
-  fullScreen: false
+  fullScreen: false,
+  showWhen: { immediately: false, firstPaint: false, showCalled: false }
 };
 
 const INSETS_EVENT = "chain://window-insets";
 const FULL_SCREEN_EVENT = "chain://window-full-screen";
+const SHOWN_EVENT = "chain://window-shown";
 
 async function call<T>(method: string, cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri()) {
@@ -70,6 +72,9 @@ export const appWindow: WindowApi = {
   onInsetsChange: (listener) => subscribe(INSETS_EVENT, listener),
   isFullScreen: () => call<boolean>("isFullScreen", "window_is_full_screen"),
   onFullScreenChange: (listener) => subscribe(FULL_SCREEN_EVENT, listener),
+  show: () => call<void>("show", "window_show"),
+  isShown: () => call<boolean>("isShown", "window_is_shown"),
+  onShown: (listener) => subscribe(SHOWN_EVENT, () => listener()),
   startDrag: () => call<void>("startDrag", "window_start_drag")
 };
 
@@ -209,6 +214,9 @@ if (isTauri() && typeof document !== "undefined") {
   subscribe<TitleBarInsets>(INSETS_EVENT, showInsets);
   subscribe<boolean>(FULL_SCREEN_EVENT, showFullScreen);
   void showChrome();
+  // The second frame callback runs once the first frame is drawn: what
+  // showWhen "firstPaint" waits for.
+  requestAnimationFrame(() => requestAnimationFrame(() => void invoke("window_page_painted").catch(() => {})));
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => void handleDragRegions(), { once: true });
   } else {

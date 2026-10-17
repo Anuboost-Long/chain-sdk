@@ -1,0 +1,16 @@
+{
+  "name": "share",
+  "description": "The system share menu for app-owned files, anchored to an element, with optional text and title; reports the picked service or cancel.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/share/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["mneme"],
+  "generalizable": true
+}

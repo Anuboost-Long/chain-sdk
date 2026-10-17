@@ -3,6 +3,7 @@ import fs from "node:fs";
 import type { Readable } from "node:stream";
 
 import { largeCacheHint } from "./clean.js";
+import { DEFAULT_DEV_PORT, devPortConfig, freeDevPort, readBeforeDevCommand } from "./devPort.js";
 import { chainCoreFeaturesOrExit } from "./features.js";
 import {
   ansi,
@@ -13,7 +14,7 @@ import {
   type NativeOutputState
 } from "./nativeOutput.js";
 import {
-  checkChainApp,
+  prepareChainApp,
   resolveTauriBin,
   sharedDevTargetDir,
   taskkillPath,
@@ -23,7 +24,7 @@ import { syncPermissionsOrExit } from "./permissions.js";
 
 export async function dev(args: string[]): Promise<void> {
   const cwd = process.cwd();
-  checkChainApp(cwd);
+  prepareChainApp(cwd);
 
   const tauriBin = resolveTauriBin(cwd);
   if (!fs.existsSync(tauriBin)) {
@@ -111,17 +112,35 @@ export async function dev(args: string[]): Promise<void> {
     }
   }
 
-  function spawnTauri(): void {
+  /** `--config` moving the dev server and window off a taken 1420 —
+   * another Chain app's `chain dev`, usually. Empty when 1420 is free. */
+  async function devPortArgs(): Promise<string[]> {
+    const port = await freeDevPort();
+    if (port === DEFAULT_DEV_PORT) return [];
+    const config = devPortConfig(readBeforeDevCommand(cwd), port);
+    if (!config) {
+      console.error(
+        `Error: port ${DEFAULT_DEV_PORT} is in use, and tauri.conf.json's beforeDevCommand isn't an ` +
+          "`npm run` script, so chain dev can't move the dev server to another port. Stop whatever holds it."
+      );
+      process.exit(1);
+    }
+    console.log(color(ansi.gray, `  port ${DEFAULT_DEV_PORT} is in use — using ${port}`) + "\n");
+    return ["--config", config];
+  }
+
+  async function spawnTauri(): Promise<void> {
     state = freshState();
     suppressExitMessage = false;
     const gen = ++generation;
     // Re-read on every (re)start, so an edited declaration takes effect on "r".
     syncPermissionsOrExit(cwd);
+    const portArgs = await devPortArgs();
     // --features chain-dev-inspector powers `chain inspect` and
     // chain-core/dev-trace its --trace — chain build passes neither, so
     // they never ship in a release binary.
     const features = ["chain-dev-inspector", "chain-core/dev-trace", ...chainCoreFeaturesOrExit(cwd)].join(",");
-    child = spawn(tauriBin, ["dev", "--features", features, ...args], {
+    child = spawn(tauriBin, ["dev", "--features", features, ...portArgs, ...args], {
       cwd,
       // A developer's own CARGO_TARGET_DIR still wins.
       env: { CARGO_TARGET_DIR: sharedDevTargetDir(), ...tauriEnv(cwd) },
@@ -136,7 +155,17 @@ export async function dev(args: string[]): Promise<void> {
     child.stderr.on("data", (chunk: Buffer) => {
       if (gen === generation) handleChunk(chunk);
     });
+    const pid = child.pid;
     child.on("exit", (code) => {
+      // tauri dev can exit and leave Vite or the app running in its group
+      // (a failed first start did) — they'd hold the port and a window.
+      if (process.platform !== "win32" && pid !== undefined) {
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch {
+          // The group is already gone.
+        }
+      }
       if (exiting || suppressExitMessage || gen !== generation) return;
       state.native.status = code ? "error" : "stopped";
       const restartHint = canReadKeys ? " — press r to restart, q to quit" : "";
@@ -162,7 +191,7 @@ export async function dev(args: string[]): Promise<void> {
     process.exit(code);
   }
 
-  spawnTauri();
+  await spawnTauri();
 
   if (canReadKeys) {
     console.log(color(ansi.gray, "  r restart   v verbose   q quit") + "\n");

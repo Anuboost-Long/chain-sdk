@@ -1,0 +1,16 @@
+{
+  "name": "keep-awake",
+  "description": "Keep the computer from idle-sleeping (and the display, by default) while the app works, with a reason the OS shows; one assertion per app, released by the kernel on quit or crash.",
+  "status": "draft",
+  "contract": {
+    "semantic": "../../agent-docs/capabilities/keep-awake/CONTRACT.md",
+    "structural": "contract.ts"
+  },
+  "platforms": {
+    "macos": "experimental",
+    "windows": "not-started",
+    "linux": "not-planned"
+  },
+  "consumers": ["lazify"],
+  "generalizable": true
+}

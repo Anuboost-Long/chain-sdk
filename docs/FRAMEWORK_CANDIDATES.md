@@ -93,6 +93,8 @@ Used by:
 
 - Mneme (real consumer — requested it; see
   `docs/chain-sdk-requests/04-lms-page-fetch.md` in the mneme repo)
+- Lazify (API Studio's request runner; `trustLoopbackCertificates` from
+  its `docs/chain-sdk-requests/19-loopback-tls-trust.md`)
 
 Generalizable:
 Yes — a webview `fetch()` to an arbitrary external origin hits ordinary
@@ -163,6 +165,11 @@ Used by:
   `docs/chain-sdk-requests/10-subprocess-runner.md` in the mneme repo,
   plus `12-process-runner-stdin.md` for the one-shot `options.stdin`
   payload)
+- Lazify (request 03 in `lazify-chain/docs/chain-sdk-requests/` — `cwd`,
+  `env`, writing to stdin mid-run, and killing the whole process tree;
+  request 15 — `launch()`, a program the app never stops, for "Open in
+  editor"; request 16 — `output: "bytes"`, for language servers framing
+  stdout by byte count)
 
 Generalizable:
 Yes — spawning a named executable with an argv array and streaming its
@@ -182,7 +189,8 @@ a real subprocess's output arrival timing matched its own real `sleep`
 calls (proof it streams rather than buffers to exit), stderr captured
 separately from stdout, a real non-zero exit code round-tripped
 correctly, and `kill()` stopped a long-running process well before its
-own timeout
+own timeout. `launch()` verified in a `chain init` app: the launched
+program kept running after `chain dev` killed the app's process group
 
 Windows:
 Not started — see `agent-docs/capabilities/process-runner/research/WINDOWS.md`
@@ -301,6 +309,31 @@ Engine archive pinned, never built or run there
 Possible package:
 `@chain/sdk` (bundled in core)
 
+## Packages
+
+Used by:
+Lazify (request 17 — install VS Code extensions from Open VSX to run the
+language servers they ship)
+
+Generalizable:
+Yes — any app that installs plugins or tools it runs with an interpreter
+the user has (a `.jar`, a Node script) needs streamed, verified,
+cancellable installs with real paths
+
+Contract:
+Draft (`agent-docs/capabilities/packages/CONTRACT.md`,
+`capabilities/packages/contract.ts`)
+
+macOS:
+Implemented and verified end to end against Open VSX (install, resolve,
+cancel of a 177 MB download, integrity failure, remove)
+
+Windows:
+Plain Rust shared with models; never built or run there
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
 ## Tts
 
 Used by:
@@ -375,6 +408,31 @@ never run — checklist in research/WINDOWS.md
 Possible package:
 `@chain/sdk` (bundled in core)
 
+
+## BrowserView
+
+Used by:
+lazify (request 18 — its in-app browser tabs and the agent's dev-server
+preview, each on its own named session; request 21 — its ad/tracker
+blocker and media picture-in-picture on those views)
+
+Generalizable:
+Yes — any app that shows third-party web content inside its own layout
+(tabs, previews, docs panes) under app-decided navigation policy
+
+Contract:
+Draft (`agent-docs/capabilities/browser-view/CONTRACT.md`, `capabilities/browser-view/contract.ts`)
+
+macOS:
+Implemented natively in Chain Core: a `WKWebView` subclass above the
+app's page with Chain's own navigation/UI delegates, macOS 14+;
+verified in the playground (see CAPABILITY_MATRIX.md)
+
+Windows:
+Not started — WebView2 `CoreWebView2Controller` with deferrals (AGENTS.md)
+
+Possible package:
+`@chain/sdk` (bundled in core)
 ## Embeddings
 
 Used by:
@@ -403,12 +461,16 @@ Possible package:
 
 Used by:
 mneme (request 38 — run its dark nav bar to the top of the window with
-the window buttons on it, instead of under macOS 27's solid title bar)
+the window buttons on it, instead of under macOS 27's solid title bar;
+request 40 — show the window only once its launch screen has painted);
+lazify (request 11 — open at 1440×920, never smaller than 1180×760,
+titled "Lazify"; request 12 — Tab reaching every button, as in
+Electron)
 
 Generalizable:
 Yes — every desktop app with its own top bar (the Notion/Linear/VS Code
 look), and any app that wants its window colours right before the page
-paints
+paints, or its window to appear already drawn
 
 Contract:
 Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contract.ts`)
@@ -416,13 +478,221 @@ Draft (`agent-docs/capabilities/window/CONTRACT.md`, `capabilities/window/contra
 macOS:
 Implemented: objc2 property sets in `crates/core/src/window.rs`, a Swift
 drag view, toolbar-backed bar sizes and button placer in
-`crates/core/swift/ChainWindow.swift`; verified in the playground
+`crates/core/swift/ChainWindow.swift`; `showWhen` keeps the window
+undrawn (alpha 0) until first paint/`show()`/timeout; verified in the
+playground
 
 Windows:
 Portable subset through Tauri calls (hidden = no frame, theme,
-background, drag, full screen); overlay falls back; never run —
+background, drag, full screen); overlay and `showWhen` fall back; never run —
 checklist in research/WINDOWS.md
 
 Possible package:
 `@chain/sdk` (bundled in core)
 
+## Pdf
+
+Used by:
+mneme (request 41 — "Share as PDF" for pages, summaries and flashcard
+decks)
+
+Generalizable:
+Yes — any app that exports reports, notes or invoices as PDF from its
+own HTML
+
+Contract:
+Draft (`agent-docs/capabilities/pdf/CONTRACT.md`, `capabilities/pdf/contract.ts`)
+
+macOS:
+Implemented: a hidden Tauri webview printed through WKWebView's
+`printOperation`, redrawn with CoreText header/footer, metadata and
+links in `crates/core/swift/ChainPdf.swift`; verified in the
+playground. Complex scripts (Khmer, Arabic, Devanagari) don't copy or
+search — a Quartz limitation, reported by `availability()`
+
+Windows:
+Not started — WebView2 `PrintToPdf`, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Share
+
+Used by:
+mneme (request 42 — send the PDF from "Share as PDF" by AirDrop,
+Messages or Mail)
+
+Generalizable:
+Yes — any app that makes files people send on
+
+Contract:
+Draft (`agent-docs/capabilities/share/CONTRACT.md`, `capabilities/share/contract.ts`)
+
+macOS:
+Implemented: `NSSharingServicePicker` in
+`crates/core/swift/ChainShare.swift` over staged, renamed copies;
+verified in the playground except picking a service (needs a person)
+
+Windows:
+Not started — `DataTransferManager` share UI, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Folders
+
+Used by:
+lazify (requests 01 and 02 — open and index project folders, edit
+`.env`, project-local data, change events; 14 — move a staged project
+onto another volume), mneme (request 11 — read
+other tools' session files incrementally, through declared folders)
+
+Generalizable:
+Yes — any app whose subject is the user's own files: editors,
+developer tools, anything that opens a folder
+
+Contract:
+Draft (`agent-docs/capabilities/folders/CONTRACT.md`, `capabilities/folders/contract.ts`)
+
+macOS:
+Implemented in Rust (`std::fs`, `notify`/FSEvents, `rfd` picker,
+`NSFileManager` Trash); verified end to end in a scaffolded app except
+drag-and-drop and a real privacy-protection denial
+
+Windows:
+Not started — long paths, locked files and Trash in research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Terminal
+
+Used by:
+lazify (request 04 — dev servers and AI agent CLIs in real terminals
+that survive a page reload)
+
+Generalizable:
+Yes — any app that embeds a terminal: IDEs, devtools, agent monitors
+
+Contract:
+Draft (`agent-docs/capabilities/terminal/CONTRACT.md`, `capabilities/terminal/contract.ts`)
+
+macOS:
+Implemented with `portable-pty` (openpty); verified end to end,
+including reattaching after a real reload
+
+Windows:
+Not started — ConPTY through the same crate, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Ports
+
+Used by:
+lazify (request 05 — step a dev script up to a free port; wait for a
+stopped server's port before restarting)
+
+Generalizable:
+Yes — any app that starts local servers (devtools, IDEs, local AI
+runtimes)
+
+Contract:
+Draft (`agent-docs/capabilities/ports/CONTRACT.md`, `capabilities/ports/contract.ts`)
+
+macOS:
+Implemented in Rust (`std::net` binds on four addresses); verified end to
+end against real Node servers
+
+Windows:
+Not started — different bind-conflict rules, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Attention
+
+Used by:
+lazify (request 07 — notify and bounce the Dock when an agent waits for
+an answer or finishes while the user is in another app)
+
+Generalizable:
+Yes — any app that does long work in the background
+
+Contract:
+Draft (`agent-docs/capabilities/attention/CONTRACT.md`, `capabilities/attention/contract.ts`)
+
+macOS:
+Partial — focus and the Dock bounce verified; notifications implemented
+in Swift (`UNUserNotificationCenter`), bundle-only, shown/click path
+unverified (macOS refused ad-hoc test bundles, research/MACOS.md)
+
+Windows:
+Not started — WinRT toasts, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## PageZoom
+
+Used by:
+lazify (request 08 — its zoom setting and Cmd +/−/0)
+
+Generalizable:
+Yes — any app with a zoom or text-size setting
+
+Contract:
+Draft (`agent-docs/capabilities/page-zoom/CONTRACT.md`, `capabilities/page-zoom/contract.ts`)
+
+macOS:
+Implemented through Tauri's `Webview::set_zoom` (WKWebView `pageZoom`);
+verified end to end
+
+Windows:
+Not verified — WebView2 `ZoomFactor`, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## KeepAwake
+
+Used by:
+lazify (request 09 — keep the Mac awake while agents work)
+
+Generalizable:
+Yes — any app doing long unattended work (renders, syncs, agents)
+
+Contract:
+Draft (`agent-docs/capabilities/keep-awake/CONTRACT.md`, `capabilities/keep-awake/contract.ts`)
+
+macOS:
+Implemented with IOKit power assertions; verified end to end with `pmset`
+
+Windows:
+Not started — `PowerCreateRequest`, research/WINDOWS.md
+
+Possible package:
+`@chain/sdk` (bundled in core)
+
+## Updates
+
+Used by:
+lazify (request 22 — "Check for updates" in Settings, ad-hoc signed
+first release)
+
+Generalizable:
+Yes — any distributed Chain app
+
+Contract:
+Draft (`agent-docs/capabilities/updates/CONTRACT.md`, `capabilities/updates/contract.ts`)
+
+macOS:
+tauri-plugin-updater (feed, download, Ed25519 check) plus Chain's own
+atomic install and install-on-quit; verified with a test app
+(see CAPABILITY_MATRIX.md)
+
+Windows:
+Not started
+
+Possible package:
+`@chain/sdk` (bundled in core)

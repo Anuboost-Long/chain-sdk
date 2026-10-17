@@ -3,7 +3,7 @@
 //! Plain Rust over sherpa-onnx's C API, so it's the same on every OS.
 //!
 //! Pipeline, streamed so an hour of audio never sits in memory at once:
-//! symphonia decodes the file → downmix to mono → sherpa's resampler to
+//! crate::sound decodes the file to mono → sherpa's resampler to
 //! 16 kHz → Silero VAD cuts speech segments → each segment is decoded by
 //! the offline recognizer and becomes one transcript segment.
 
@@ -115,18 +115,10 @@ fn transcript_of(segments: Vec<Segment>, locale: String) -> Transcript {
 #[cfg(not(chain_no_sherpa))]
 mod engine {
     use std::ffi::{CStr, CString};
-    use std::fs::File;
-
-    use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-    use symphonia::core::errors::Error as DecodeError;
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     use super::ffi::*;
     use super::*;
+    use crate::sound::Sound;
 
     const SAMPLE_RATE: i32 = 16_000;
     /// Silero VAD's window at 16 kHz.
@@ -300,37 +292,6 @@ mod engine {
         }
     }
 
-    /// Container reader, decoder, sample rate, and frame count when known.
-    type OpenedAudio =
-        (Box<dyn symphonia::core::formats::FormatReader>, Box<dyn symphonia::core::codecs::Decoder>, u32, Option<u64>);
-
-    fn open_audio(audio: &Path) -> Result<OpenedAudio, SpeechError> {
-        let unreadable = |e: DecodeError| SpeechError::Other(format!("couldn't read the audio: {e}"));
-        let file = File::open(audio).map_err(|e| SpeechError::Other(format!("couldn't open the audio: {e}")))?;
-        let mut hint = Hint::new();
-        if let Some(extension) = audio.extension().and_then(|e| e.to_str()) {
-            hint.with_extension(extension);
-        }
-        let probed = symphonia::default::get_probe()
-            .format(&hint, MediaSourceStream::new(Box::new(file), Default::default()), &FormatOptions::default(), &MetadataOptions::default())
-            .map_err(unreadable)?;
-        let format = probed.format;
-        let track = format
-            .tracks()
-            .iter()
-            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-            .ok_or_else(|| SpeechError::Other("the file has no audio track".to_string()))?;
-        let rate = track
-            .codec_params
-            .sample_rate
-            .ok_or_else(|| SpeechError::Other("the audio doesn't say its sample rate".to_string()))?;
-        let frames = track.codec_params.n_frames;
-        let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
-            .map_err(unreadable)?;
-        Ok((format, decoder, rate, frames))
-    }
-
     pub fn transcribe(
         audio: &Path,
         engine: &Engine,
@@ -339,7 +300,8 @@ mod engine {
         mut on_progress: impl FnMut(f64),
     ) -> Result<Transcript, SpeechError> {
         let language = engine.asr.language().map(str::to_string).or_else(|| locale.map(language_code)).unwrap_or_default();
-        let (mut format, mut decoder, rate, total_frames) = open_audio(audio)?;
+        let mut sound = Sound::open(audio)?;
+        let rate = sound.sample_rate;
         let recognizer = create_recognizer(&engine.asr, &language)?;
         let max_seconds = max_segment_seconds(&engine.asr);
         let max_samples = (max_seconds * SAMPLE_RATE as f32) as usize;
@@ -351,7 +313,6 @@ mod engine {
 
         let mut segments = Vec::new();
         let mut pending: Vec<f32> = Vec::new();
-        let mut decoded_frames = 0u64;
         let mut reported = 0.0;
         let feed = |mono: &[f32], flush: bool, pending: &mut Vec<f32>, segments: &mut Vec<Segment>| {
             match &resampler {
@@ -372,32 +333,13 @@ mod engine {
             if cancelled() {
                 return Err(SpeechError::Cancelled);
             }
-            let packet = match format.next_packet() {
-                Ok(packet) => packet,
-                Err(DecodeError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(SpeechError::Other(format!("couldn't read the audio: {e}"))),
-            };
-            let decoded = match decoder.decode(&packet) {
-                Ok(decoded) => decoded,
-                // A damaged packet is skipped, like players do.
-                Err(DecodeError::DecodeError(_)) => continue,
-                Err(e) => return Err(SpeechError::Other(format!("couldn't decode the audio: {e}"))),
-            };
-            let spec = *decoded.spec();
-            let channels = spec.channels.count().max(1);
-            let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-            buffer.copy_interleaved_ref(decoded);
-            let mono: Vec<f32> =
-                buffer.samples().chunks(channels).map(|frame| frame.iter().sum::<f32>() / channels as f32).collect();
-            decoded_frames += mono.len() as u64;
+            let Some(mono) = sound.next()? else { break };
             feed(&mono, false, &mut pending, &mut segments);
-            if let Some(total) = total_frames.filter(|t| *t > 0) {
-                // Whole percents only: one call per decoded packet would flood IPC.
-                let fraction = ((decoded_frames as f64 / total as f64) * 100.0).floor() / 100.0;
-                if fraction > reported {
-                    reported = fraction;
-                    on_progress(fraction.min(0.99));
-                }
+            // Whole percents only: one call per decoded packet would flood IPC.
+            let fraction = (sound.progress() * 100.0).floor() / 100.0;
+            if fraction > reported {
+                reported = fraction;
+                on_progress(fraction.min(0.99));
             }
         }
         feed(&[], true, &mut pending, &mut segments);

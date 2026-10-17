@@ -29,7 +29,12 @@
       "titleBarStyle": "overlay",
       "titleBarSize": "large",
       "backgroundColor": "#1d2b53",
-      "appearance": "dark"
+      "appearance": "dark",
+      "showWhen": "firstPaint",
+      "size": { "width": 1100, "height": 720 },
+      "minSize": { "width": 900, "height": 600 },
+      "title": "Chain Playground",
+      "tabFocus": "all"
     }
   }
 }
